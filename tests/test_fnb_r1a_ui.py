@@ -58,10 +58,10 @@ def test_fnb_page_and_assets_are_wired(client):
         "fnbServiceTickets",
     ):
         assert f'id="{element_id}"' in html
-    assert "/css/fnb-r1a.css?v=20260907-plan2" in html
+    assert "/css/fnb-r1a.css?v=20260907-plan2-correction1" in html
     assert 'aria-describedby="fnbCashTenderedHelp fnbCashTenderedError"' in html
     assert "/js/locales/fnb.js?v=20260907-plan2" in html
-    assert "/js/fnb-r1a.js?v=20260907-plan2" in html
+    assert "/js/fnb-r1a.js?v=20260907-plan2-correction1" in html
     source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
     assert "values.voucher_code = voucherCode" in source
     assert "values.loyalty_points_to_use = loyaltyPoints" in source
@@ -122,6 +122,13 @@ def test_fnb_r3_operational_layout_is_wired():
     assert "fnb.checkout.paid_label" in source
     assert "ticketAgeMinutes" in station
     assert "fnb-ticket-lane" in station
+
+
+def test_fnb_back_links_are_touch_sized():
+    css = (ROOT / "static/css/fnb-r1a.css").read_text(encoding="utf-8")
+    rule = css.split(".fnb-back {", 1)[1].split("}", 1)[0]
+    assert "display: inline-flex" in rule
+    assert "min-height: 44px" in rule
 
 
 def test_pos_entry_is_hidden_until_shop_capability_is_known():

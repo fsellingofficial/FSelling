@@ -39,7 +39,7 @@ body.fnb-page {
 }
 
 .fnb-header h1 { margin: 0; font-size: clamp(1.2rem, 2vw, 1.55rem); }
-.fnb-back { color: var(--fnb-ink); font-weight: 700; text-decoration: none; }
+.fnb-back { display: inline-flex; min-height: 44px; align-items: center; color: var(--fnb-ink); font-weight: 700; text-decoration: none; }
 .fnb-back::before { content: "← "; }
 .fnb-shop-field, .fnb-language-field { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--fnb-muted); }
 .fnb-header select { max-width: 220px; border: 1px solid var(--fnb-line); border-radius: 8px; background: #fff; padding: 0 10px; color: var(--fnb-ink); }
