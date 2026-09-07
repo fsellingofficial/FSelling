@@ -122,3 +122,51 @@ def test_0012_models_expose_ticket_handoff_provenance():
 
     assert models.FnbKitchenTicket.served_by_user_id is not None
     assert models.FnbKitchenTicket.served_at is not None
+
+
+def test_0012_upgrade_fails_closed_before_ddl_for_done_out_of_stock(tmp_path):
+    database = tmp_path / "fnb-plan2-legacy-invalid.db"
+    runner = _database_at_r1c(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE fnb_kitchen_tickets "
+            "SET status='DONE', out_of_stock_reason='legacy conflict' WHERE id=1"
+        )
+        connection.commit()
+
+    with pytest.raises(RuntimeError, match="FNB_PLAN2_LEGACY_DONE_OUT_OF_STOCK"):
+        runner.upgrade("head")
+
+    with sqlite3.connect(database) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(fnb_kitchen_tickets)")
+        }
+        version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+    assert "served_by_user_id" not in columns
+    assert version == (R1C,)
+
+
+def test_0012_verifier_rejects_done_out_of_stock_legacy_row(tmp_path):
+    database = tmp_path / "fnb-plan2-verify-invalid.db"
+    runner = _database_at_r1c(database)
+    runner.upgrade("head")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE fnb_kitchen_tickets "
+            "SET status='DONE', out_of_stock_reason='legacy conflict' WHERE id=1"
+        )
+        connection.commit()
+
+    with pytest.raises(RuntimeError, match="FNB_PLAN2_VERIFY_TICKET_LIFECYCLE"):
+        runner.verify()
+
+
+def test_0012_downgrade_is_explicitly_forward_only(tmp_path):
+    database = tmp_path / "fnb-plan2-forward-only.db"
+    runner = _database_at_r1c(database)
+    runner.upgrade("head")
+    spec = runner._graph().head
+
+    with pytest.raises(RuntimeError, match="FORWARD_ONLY_MIGRATION"):
+        spec.module.downgrade()

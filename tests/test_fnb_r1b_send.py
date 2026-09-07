@@ -1,4 +1,7 @@
+import datetime
 import uuid
+
+import pytest
 
 from conftest import (
     auth,
@@ -10,9 +13,113 @@ from conftest import (
 )
 from fselling import models
 
+from test_fnb_r1b_cancel import sent_session
+
 
 def op(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
+
+
+@pytest.mark.parametrize("session_status", ["CLOSED", "CANCELLED"])
+@pytest.mark.parametrize(
+    ("route", "extra"),
+    [
+        ("start", {}),
+        ("done", {}),
+        ("out-of-stock", {"reason": "Hết nguyên liệu"}),
+        ("resume", {}),
+        ("serve", {}),
+    ],
+)
+def test_every_ticket_mutation_fails_closed_on_terminal_session(
+    client, db, session_status, route, extra
+):
+    ctx, session = sent_session(client, db)
+    ticket = session["tickets"][0]
+    stored_session = db.get(models.FnbServiceSession, session["id"])
+    stored_session.status = session_status
+    for link in db.query(models.FnbSessionTable).filter_by(session_id=session["id"]):
+        link.released_at = datetime.datetime.utcnow()
+    db.commit()
+    shop_revision = db.get(models.Shop, ctx["shop_id"]).fnb_revision
+
+    response = client.post(
+        f"/api/fnb/tickets/{ticket['id']}/{route}",
+        json={
+            "expected_state_version": ticket["state_version"],
+            "expected_session_revision": session["revision"],
+            "operation_id": op(f"terminal-{route}"),
+            **extra,
+        },
+        headers=auth(ctx["token"]),
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "FNB_SESSION_NOT_ACTIVE"
+    db.expire_all()
+    assert db.get(models.FnbKitchenTicket, ticket["id"]).state_version == 0
+    assert db.get(models.FnbServiceSession, session["id"]).revision == session["revision"]
+    assert db.get(models.Shop, ctx["shop_id"]).fnb_revision == shop_revision
+
+
+def test_legacy_empty_ticket_is_hidden_and_cannot_mutate(client, db):
+    ctx, session = sent_session(client, db)
+    ticket = session["tickets"][0]
+    item = db.query(models.FnbKitchenTicketItem).filter_by(ticket_id=ticket["id"]).one()
+    item.cancelled_quantity = item.quantity
+    db.commit()
+
+    queue = client.get(
+        "/api/fnb/stations/KITCHEN/tickets",
+        params={"shop_id": ctx["shop_id"]},
+        headers=auth(ctx["token"]),
+    )
+    assert queue.status_code == 200
+    assert queue.json()["tickets"] == []
+    response = client.post(
+        f"/api/fnb/tickets/{ticket['id']}/start",
+        json={
+            "expected_state_version": 0,
+            "expected_session_revision": session["revision"],
+            "operation_id": op("legacy-empty"),
+        },
+        headers=auth(ctx["token"]),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "FNB_TICKET_EMPTY"
+
+
+def test_done_out_of_stock_ticket_is_not_ready_or_servable(client, db):
+    ctx, session = sent_session(client, db)
+    ticket = session["tickets"][0]
+    stored = db.get(models.FnbKitchenTicket, ticket["id"])
+    stored.status = "DONE"
+    stored.out_of_stock_reason = "Dữ liệu cũ không hợp lệ"
+    db.commit()
+
+    snapshot = client.get(
+        f"/api/fnb/sessions/{session['id']}", headers=auth(ctx["token"])
+    )
+    assert snapshot.status_code == 200
+    body = snapshot.json()
+    assert body["service_summary"]["READY"] == 0
+    assert body["service_tickets"][0]["service_stage"] != "READY"
+
+    response = client.post(
+        f"/api/fnb/tickets/{ticket['id']}/serve",
+        json={
+            "expected_state_version": 0,
+            "expected_session_revision": session["revision"],
+            "operation_id": op("legacy-serve"),
+        },
+        headers=auth(ctx["token"]),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "FNB_TICKET_OUT_OF_STOCK"
+    stored = db.get(models.FnbKitchenTicket, ticket["id"])
+    stored.status = "NEW"
+    stored.out_of_stock_reason = None
+    db.commit()
 
 
 def test_send_is_atomic_idempotent_and_station_scoped(client, db):

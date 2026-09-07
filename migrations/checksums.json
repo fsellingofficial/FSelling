@@ -59,7 +59,7 @@
     "0012_fnb_ticket_service_handoff": {
       "down_revision": "0011_fnb_checkout_r1c",
       "path": "versions/0012_fnb_ticket_service_handoff.py",
-      "sha256": "16b7b63bf3d3dde6b565f8aa7ba15729bf6bee8343da6ac14bce860835fe5ff4"
+      "sha256": "26329791332a0934e76c36aaaadf2c67fb42fd4272f380c8c35e7efc9e6831ed"
     }
   }
 }

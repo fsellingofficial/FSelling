@@ -68,6 +68,48 @@ def test_cancel_new_sent_item_restores_exact_stock_once(client, db):
     assert db.get(models.Product, ctx["product"]["id"]).stock == 9
 
 
+def test_full_cancel_terminalizes_ticket_once_and_removes_it_from_kds(client, db):
+    ctx, session = sent_session(client, db)
+    headers = auth(ctx["token"])
+    line = session["lines"][0]
+    ticket = session["tickets"][0]
+    payload = {
+        "line_id": line["id"],
+        "quantity": 2,
+        "expected_line_version": line["state_version"],
+        "expected_revision": session["revision"],
+        "operation_id": op("full-cancel"),
+    }
+
+    response = client.post(
+        f"/api/fnb/sessions/{session['id']}/cancel-line",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    cancelled = response.json()
+    assert cancelled["revision"] == session["revision"] + 1
+    db.expire_all()
+    stored_ticket = db.get(models.FnbKitchenTicket, ticket["id"])
+    assert (stored_ticket.status, stored_ticket.state_version) == ("CANCELLED", 1)
+    assert client.get(
+        "/api/fnb/stations/KITCHEN/tickets",
+        params={"shop_id": ctx["shop_id"]},
+        headers=headers,
+    ).json()["tickets"] == []
+
+    retry = client.post(
+        f"/api/fnb/sessions/{session['id']}/cancel-line",
+        json=payload,
+        headers=headers,
+    )
+    assert retry.status_code == 200
+    assert retry.json() == cancelled
+    db.expire_all()
+    assert db.get(models.FnbKitchenTicket, ticket["id"]).state_version == 1
+    assert db.get(models.FnbServiceSession, session["id"]).revision == cancelled["revision"]
+
+
 def test_in_progress_cancel_requires_bound_one_use_manager_approval(client, db):
     ctx, session = sent_session(client, db)
     ticket = session["tickets"][0]

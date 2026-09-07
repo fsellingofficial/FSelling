@@ -2158,7 +2158,7 @@ def _ticket_result(db: Session, ticket: models.FnbKitchenTicket) -> dict:
     service_stage = ticket.status
     if ticket.served_at is not None:
         service_stage = "SERVED"
-    elif ticket.status == "DONE":
+    elif ticket.status == "DONE" and not ticket.out_of_stock_reason:
         service_stage = "READY"
     return {
         "id": ticket.id,
@@ -2383,11 +2383,23 @@ def get_station_tickets(
         return {"changed": False, "station": station, "revision": revision}
     tickets = (
         db.query(models.FnbKitchenTicket)
+        .join(
+            models.FnbServiceSession,
+            models.FnbServiceSession.id == models.FnbKitchenTicket.session_id,
+        )
+        .join(
+            models.FnbKitchenTicketItem,
+            models.FnbKitchenTicketItem.ticket_id == models.FnbKitchenTicket.id,
+        )
         .filter(
             models.FnbKitchenTicket.shop_id == shop_id,
             models.FnbKitchenTicket.station == station,
             models.FnbKitchenTicket.status.in_(("NEW", "IN_PROGRESS")),
+            models.FnbServiceSession.status.in_(_ACTIVE_SESSION_STATUSES),
+            models.FnbKitchenTicketItem.quantity
+            > func.coalesce(models.FnbKitchenTicketItem.cancelled_quantity, 0),
         )
+        .distinct()
         .order_by(models.FnbKitchenTicket.sequence)
         .all()
     )
@@ -2398,6 +2410,28 @@ def get_station_tickets(
         "revision": revision,
         "tickets": [_ticket_result(db, ticket) for ticket in tickets],
     }
+
+
+def _ticket_session_for_mutation(
+    db: Session, ticket: models.FnbKitchenTicket
+) -> models.FnbServiceSession:
+    session = db.get(models.FnbServiceSession, ticket.session_id)
+    if session is None:
+        raise fnb_error(404, "FNB_SESSION_NOT_FOUND", "Không tìm thấy phiên phục vụ")
+    if session.status not in _ACTIVE_SESSION_STATUSES:
+        raise fnb_error(409, "FNB_SESSION_NOT_ACTIVE", "Phiên phục vụ đã kết thúc")
+    active_item = (
+        db.query(models.FnbKitchenTicketItem.id)
+        .filter(
+            models.FnbKitchenTicketItem.ticket_id == ticket.id,
+            models.FnbKitchenTicketItem.quantity
+            > func.coalesce(models.FnbKitchenTicketItem.cancelled_quantity, 0),
+        )
+        .first()
+    )
+    if active_item is None:
+        raise fnb_error(409, "FNB_TICKET_EMPTY", "Phiếu không còn món cần xử lý")
+    return session
 
 
 def transition_ticket(
@@ -2446,6 +2480,7 @@ def transition_ticket(
         )
         if ticket is None:
             raise fnb_error(404, "FNB_TICKET_NOT_FOUND", "Không tìm thấy phiếu")
+        session = _ticket_session_for_mutation(db, ticket)
         if int(ticket.state_version or 0) != request.expected_state_version:
             raise fnb_error(
                 409,
@@ -2454,9 +2489,6 @@ def transition_ticket(
                 state_version=int(ticket.state_version or 0),
                 snapshot=_ticket_result(db, ticket),
             )
-        session = db.get(models.FnbServiceSession, ticket.session_id)
-        if session is None:
-            raise fnb_error(404, "FNB_SESSION_NOT_FOUND", "Không tìm thấy phiên phục vụ")
         require_session_revision(db, session, request.expected_session_revision)
         if transition == "out-of-stock":
             reason = _normalize_note(request.reason)
@@ -2541,6 +2573,7 @@ def serve_ticket(
         ).first()
         if ticket is None:
             raise fnb_error(404, "FNB_TICKET_NOT_FOUND", "Không tìm thấy phiếu")
+        session = _ticket_session_for_mutation(db, ticket)
         if int(ticket.state_version or 0) != request.expected_state_version:
             raise fnb_error(
                 409,
@@ -2549,12 +2582,16 @@ def serve_ticket(
                 state_version=int(ticket.state_version or 0),
                 snapshot=_ticket_result(db, ticket),
             )
-        session = db.get(models.FnbServiceSession, ticket.session_id)
-        if session is None:
-            raise fnb_error(404, "FNB_SESSION_NOT_FOUND", "Không tìm thấy phiên phục vụ")
         require_session_revision(db, session, request.expected_session_revision)
         if request.reason is not None:
             raise fnb_error(400, "FNB_REASON_NOT_ALLOWED", "Thao tác này không cần lý do")
+        if ticket.out_of_stock_reason:
+            raise fnb_error(
+                409,
+                "FNB_TICKET_OUT_OF_STOCK",
+                "Cần tiếp tục chế biến trước khi giao món",
+                snapshot=_ticket_result(db, ticket),
+            )
         if ticket.status != "DONE" or ticket.served_at is not None:
             raise fnb_error(
                 409,
@@ -2766,6 +2803,36 @@ def _resolve_sent_allocations(
         product.stock = int(product.stock or 0) + take
 
 
+def _cancel_empty_tickets(db: Session, ticket_ids: set[int]) -> None:
+    if not ticket_ids:
+        return
+    db.flush()
+    active_item = (
+        db.query(models.FnbKitchenTicketItem.id)
+        .filter(
+            models.FnbKitchenTicketItem.ticket_id == models.FnbKitchenTicket.id,
+            models.FnbKitchenTicketItem.quantity
+            > func.coalesce(models.FnbKitchenTicketItem.cancelled_quantity, 0),
+        )
+        .correlate(models.FnbKitchenTicket)
+        .exists()
+    )
+    tickets = (
+        db.query(models.FnbKitchenTicket)
+        .filter(
+            models.FnbKitchenTicket.id.in_(ticket_ids),
+            models.FnbKitchenTicket.served_at.is_(None),
+            models.FnbKitchenTicket.status.in_(("NEW", "IN_PROGRESS", "DONE")),
+            ~active_item,
+        )
+        .all()
+    )
+    for ticket in tickets:
+        ticket.status = "CANCELLED"
+        ticket.out_of_stock_reason = None
+        ticket.state_version = int(ticket.state_version or 0) + 1
+
+
 def cancel_line(
     db: Session,
     current_user: models.User,
@@ -2821,9 +2888,17 @@ def cancel_line(
         sent_to_cancel = max(0, int(request.quantity) - max(0, unsent))
         approval = None
         reason = _normalize_note(request.reason)
+        ticket_ids: set[int] = set()
         if sent_to_cancel:
             parts = _sent_allocation_parts(db, line.id, sent_to_cancel)
             item_ids = [row.ticket_item_id for row, _ in parts if row.ticket_item_id]
+            if item_ids:
+                ticket_ids = {
+                    row[0]
+                    for row in db.query(models.FnbKitchenTicketItem.ticket_id)
+                    .filter(models.FnbKitchenTicketItem.id.in_(item_ids))
+                    .all()
+                }
             progressed = False
             if item_ids:
                 progressed = (
@@ -2874,6 +2949,7 @@ def cancel_line(
             _resolve_sent_allocations(
                 db, parts, resolution, reason, request.operation_id
             )
+            _cancel_empty_tickets(db, ticket_ids)
         line.cancelled_quantity = int(line.cancelled_quantity or 0) + request.quantity
         line.sent_cancelled_quantity = (
             int(line.sent_cancelled_quantity or 0) + sent_to_cancel

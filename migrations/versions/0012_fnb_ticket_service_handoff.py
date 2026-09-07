@@ -23,6 +23,12 @@ def _execute(statement):
 
 
 def upgrade():
+    invalid = op.get_bind().exec_driver_sql(
+        "SELECT COUNT(*) FROM fnb_kitchen_tickets "
+        "WHERE status='DONE' AND out_of_stock_reason IS NOT NULL"
+    ).scalar()
+    if invalid:
+        raise RuntimeError("FNB_PLAN2_LEGACY_DONE_OUT_OF_STOCK")
     for statement in DDL:
         _execute(statement)
 
@@ -35,6 +41,12 @@ def verify(connection):
     }
     if not {"served_by_user_id", "served_at"} <= columns:
         raise RuntimeError("FNB_PLAN2_VERIFY_TICKET_COLUMNS")
+    invalid_lifecycle = execute(
+        "SELECT COUNT(*) FROM fnb_kitchen_tickets "
+        "WHERE status='DONE' AND out_of_stock_reason IS NOT NULL"
+    ).fetchone()[0]
+    if invalid_lifecycle:
+        raise RuntimeError("FNB_PLAN2_VERIFY_TICKET_LIFECYCLE")
     invalid = execute(
         """SELECT COUNT(*)
            FROM fnb_kitchen_tickets t
