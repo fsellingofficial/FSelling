@@ -76,8 +76,19 @@ if ($WithConcurrency) { $env:RUN_CONCURRENCY_TESTS = "1" }
 # goi mang, vong lap khong thoat) - khong in ra thi khong ai de y, va bo test
 # cham la bo test bi bo qua.
 $dongHo = [Diagnostics.Stopwatch]::StartNew()
-& .\.venv\Scripts\python.exe -m pytest -q -p no:warnings
-$testExit = $LASTEXITCODE
+$pythonExe = if (Test-Path -LiteralPath '.\.venv\Scripts\python.exe' -PathType Leaf) {
+    (Resolve-Path -LiteralPath '.\.venv\Scripts\python.exe').Path
+} else {
+    (Get-Command python -CommandType Application -ErrorAction SilentlyContinue).Source
+}
+if ($pythonExe) {
+    $global:LASTEXITCODE = $null
+    & $pythonExe -m pytest -q -p no:warnings
+    $testExit = if ($null -eq $LASTEXITCODE) { 1 } else { $LASTEXITCODE }
+} else {
+    Write-Host "Khong tim thay Python trong .venv hoac PATH." -ForegroundColor Red
+    $testExit = 127
+}
 $dongHo.Stop()
 if ($WithConcurrency) { Remove-Item Env:\RUN_CONCURRENCY_TESTS -ErrorAction SilentlyContinue }
 
