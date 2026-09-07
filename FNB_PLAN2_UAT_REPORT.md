@@ -1,7 +1,7 @@
 # F&B Plan 2 — Focused Verification and UAT Report
 
-Date: 2026-09-07  
-Branch: `codex/fnb-order-lifecycle-plan2`  
+Date: 2026-09-07
+Branch: `codex/fnb-order-lifecycle-plan2`
 Baseline: `7c17fff097f3892ca41b6d962f17ed9348dd819d`
 
 ## Scope and environment
@@ -58,8 +58,46 @@ Main and KDS console error logs were empty at the end of UAT. The viewport overr
 
 Kitchen-only authorization and stale/late network responses were verified by focused automated tests, not by a separate browser login. Merge conflicts, partial settlement, cancellation conflicts, exact-operation retry, migration downgrade and restart verification are also automated-test evidence; they were not manually forced in the browser.
 
+## Correction after independent review
+
+The independent review of `c82a537` returned **CHANGES REQUIRED**. That verdict remains part of the history and is not relabeled as acceptance. The correction produced `c40e03a` (ticket lifecycle and migration guards), `ce3d5ac` (recovery CTA render order), and `500ab1c` (touch-sized navigation); final evidence is recorded after those commits.
+
+### Focused correction verification
+
+| Gate | Fresh result |
+|---|---:|
+| Ticket mutation, terminal-session, legacy ghost and lifecycle regressions (`test_fnb_r1b_send.py`) | 15 passed |
+| Full/partial cancellation and exact replay (`test_fnb_r1b_cancel.py`) | 5 passed |
+| Checkout, partial settlement and close blockers (`test_fnb_r1c_checkout.py`) | 14 passed |
+| Migration 0012 plus manifest checksum | 10 passed |
+| Main F&B UI/static contract | 13 passed |
+| Recovery controller and mounted DOM harness | Node harness passed |
+| `git diff --check` for the correction worktree | passed |
+
+Migration 0012 remains undeployed and was amended in place with a new manifest checksum. Upgrade now stops before DDL on legacy `DONE` tickets that still carry `out_of_stock_reason`; verification rejects the same invalid lifecycle. Remediation is deliberately fail-closed: reconcile the ticket to the real operational state and clear the contradictory reason (or move it back to an active preparation state) before retrying upgrade. The downgrade test now calls `downgrade()` and verifies `FORWARD_ONLY_MIGRATION` directly.
+
+### Fresh browser correction UAT
+
+Environment: in-app browser against local-only server `127.0.0.1:8018`, isolated database `C:\Users\nguye\AppData\Local\Temp\fselling-plan2-correction-uat-20260907-002\plan2.db`, synthetic account/product only.
+
+| Scenario | Fresh browser evidence | Result |
+|---|---|---:|
+| Full cancel of a NEW ticket | Ticket #1 changed the order view from waiting = 1 to waiting = 0; bill became 0 VND and product stock returned from 9 to 10 | Pass |
+| Legacy/terminal ghost visibility in KDS | Immediately after full cancel, KDS showed `Mới 0` and `Đang làm 0` | Pass for the corrected full-cancel path; legacy-row coverage remains automated |
+| Keyboard navigation | KDS back link received keyboard focus and Enter navigated to `/fnb`; the input call timed out, but the required re-observation confirmed the destination URL | Pass for this navigation control only |
+| Touch target | DOM measurement first exposed the KDS back link at 24 px high; after the shared `.fnb-back` correction and asset-version bump it measured 44 px | Pass |
+| Recovery CTA after reload | Mounted DOM regression proves the retry CTA is the final visible render after session reload | `TEST_GAP`: not forced in the real browser |
+| Lost network after send / serve | Exact operation retry remains covered by controller/service tests | `TEST_GAP`: this browser surface exposes no network-throttling control |
+| Partial settlement | Service regression verifies supplemental-check behavior | `TEST_GAP`: not repeated manually after correction |
+| Late shop/station response | Controller epoch regressions remain green | `TEST_GAP`: not forced manually after correction |
+| Merge conflict | Conflict/reapply controller and service tests remain green | `TEST_GAP`: not forced manually after correction |
+| Close with NEW / IN_PROGRESS ticket | Service checkout blocker regression remains green | `TEST_GAP`: not forced manually after correction |
+| 200% zoom | Two browser zoom shortcuts did not expose a changed zoom level or viewport metric | `TEST_GAP`: no honest 200% assertion |
+
+The automated rows above are intentionally not promoted to browser evidence. External providers, deployment behavior and production data remain `UNKNOWN-PROD` and were not touched.
+
 ## Release boundary
 
-- Full repository suite: not run by Codex; final owner-run gate passed at 100% with exit code 0.
+- Full repository suite: the owner-run gate before this correction passed at 100% with exit code 0. Because correction commits followed it, one new owner-run full-suite gate is pending.
 - Plan 2 implementation commit: `6f18d01`.
 - Push, PR and deploy: not performed.
