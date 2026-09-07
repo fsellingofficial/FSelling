@@ -267,6 +267,8 @@ def test_line_retry_is_single_write_and_floor_returns_only_serving_summary(clien
         "opened_at": first.json()["opened_at"],
         "subtotal_vnd": int(fnb_ctx["product_1"]["price"]),
         "unsent_quantity": 1,
+        "service_stage": "DIRECT",
+        "service_summary": {"NEW": 0, "IN_PROGRESS": 0, "READY": 0, "SERVED": 0},
         "table_count": 1,
     }
     assert "lines" not in current["session"]
@@ -426,6 +428,51 @@ def test_merge_sessions_preserves_line_ids_and_stale_target_is_atomic(client, fn
     merged_target = db.get(models.FnbServiceSession, target["id"])
     assert merged_target.status == "CANCELLED"
     assert merged_target.merged_into_session_id == source["id"]
+
+
+def test_merge_rejects_target_with_sent_artifacts_without_moving_graph(client, fnb_ctx, db):
+    product = db.get(models.Product, fnb_ctx["product_2"]["id"])
+    product.fnb_station = "KITCHEN"
+    db.commit()
+
+    source = open_session(client, fnb_ctx, fnb_ctx["table_1"], "merge-art-source").json()
+    target = open_session(client, fnb_ctx, fnb_ctx["table_2"], "merge-art-target").json()
+    target = add_line(client, fnb_ctx, target, fnb_ctx["product_2"], "merge-art-line")
+    sent = client.post(
+        f"/api/fnb/sessions/{target['id']}/send",
+        json={
+            "expected_revision": target["revision"],
+            "operation_id": "merge-art-send",
+        },
+        headers=auth(fnb_ctx["token"]),
+    )
+    assert sent.status_code == 200, sent.text
+    target = sent.json()
+    target_table = table_snapshot(client, fnb_ctx, fnb_ctx["table_2"]["id"])
+
+    rejected = client.post(
+        f"/api/fnb/sessions/{source['id']}/merge-table",
+        json={
+            "target_table_id": target_table["id"],
+            "expected_revision": source["revision"],
+            "expected_target_session_revision": target["revision"],
+            "expected_target_table_version": target_table["state_version"],
+            "operation_id": "merge-art-reject",
+        },
+        headers=auth(fnb_ctx["token"]),
+    )
+
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"]["code"] == "FNB_TARGET_SESSION_HAS_ARTIFACTS"
+    db.expire_all()
+    assert db.get(models.FnbServiceSession, source["id"]).status == "OPEN"
+    assert db.get(models.FnbServiceSession, target["id"]).status == "OPEN"
+    assert db.query(models.FnbSessionLine).filter_by(session_id=target["id"]).count() == 1
+    assert db.query(models.FnbKitchenTicket).filter_by(session_id=target["id"]).count() == 1
+    assert db.query(models.FnbStockAllocation).filter_by(session_id=target["id"]).count() == 1
+    assert db.query(models.FnbSessionTable).filter_by(
+        session_id=target["id"], released_at=None
+    ).count() == 1
 
 
 def test_merge_empty_table_and_cancel_session_release_every_table(client, fnb_ctx):

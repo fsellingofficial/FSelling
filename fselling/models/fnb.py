@@ -154,6 +154,8 @@ class FnbKitchenTicket(Base):
     started_at = Column(DateTime, nullable=True)
     done_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     done_at = Column(DateTime, nullable=True)
+    served_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    served_at = Column(DateTime, nullable=True)
     out_of_stock_reason = Column(String(500), nullable=True)
     state_version = Column(Integer, nullable=False, default=0)
 

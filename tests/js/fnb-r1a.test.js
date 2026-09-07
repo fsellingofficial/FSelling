@@ -36,6 +36,9 @@ function session(revision = 3) {
         }],
         unsent_quantity: 0,
         subtotal_vnd: 20000,
+        service_stage: 'DIRECT',
+        service_summary: { NEW: 0, IN_PROGRESS: 0, READY: 0, SERVED: 0 },
+        service_tickets: [],
     };
 }
 
@@ -159,6 +162,36 @@ async function testConflictKeepsDraftAndUsesAuthoritativeSnapshot() {
     assert.equal(deps.renders.at(-1).type, 'conflict');
 }
 
+async function testConflictReapplyKeepsOriginalAction() {
+    const calls = [];
+    const latest = session(6);
+    const deps = makeDeps({
+        request: async (endpoint, method, body) => {
+            if (endpoint.startsWith('/fnb/floor')) return floor();
+            calls.push({ endpoint, method, body });
+            if (calls.length === 1) {
+                const error = new Error('changed');
+                error.status = 409;
+                error.code = 'FNB_SESSION_CHANGED';
+                error.detail = { code: error.code, snapshot: latest };
+                throw error;
+            }
+            return session(7);
+        },
+    });
+    const controller = createController(deps);
+    await controller.selectShop(1);
+    controller.seedSession(session(5));
+
+    await assert.rejects(controller.moveTable(20, 21));
+    await controller.reapplyRecoverable();
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].endpoint, '/fnb/sessions/30/move-table');
+    assert.equal(calls[1].body.expected_revision, 6);
+    assert.notEqual(calls[1].body.operation_id, calls[0].body.operation_id);
+}
+
 async function testSingleFlightRetryAndDefinitiveFailure() {
     let resolveRequest;
     const calls = [];
@@ -174,7 +207,8 @@ async function testSingleFlightRetryAndDefinitiveFailure() {
     controller.seedSession(session());
     const first = controller.addLine({ product_id: 7, quantity: 1, note: '' });
     const second = controller.addLine({ product_id: 7, quantity: 1, note: '' });
-    assert.strictEqual(first, second);
+    assert.notStrictEqual(first, second);
+    await assert.rejects(second, error => error.code === 'FNB_MUTATION_PENDING');
     assert.equal(calls.length, 1);
     resolveRequest(session(4));
     await first;
@@ -196,7 +230,12 @@ async function testSingleFlightRetryAndDefinitiveFailure() {
     await assert.rejects(retry.addLine({ product_id: 7, quantity: 1, note: 'Nóng' }));
     const key = [...retryDeps.storage.keys()][0];
     assert.match(key, /lan.*1.*30/);
-    await retry.addLine({ product_id: 7, quantity: 1, note: 'Nóng' });
+    await assert.rejects(
+        retry.addLine({ product_id: 7, quantity: 1, note: 'Nóng' }),
+        error => error.code === 'FNB_MUTATION_PENDING',
+    );
+    assert.equal(bodies.length, 1);
+    await retry.retryPending();
     assert.equal(bodies[0].operation_id, bodies[1].operation_id);
 
     const rejectedBodies = [];
@@ -218,6 +257,29 @@ async function testSingleFlightRetryAndDefinitiveFailure() {
     await assert.rejects(rejected.addLine({ product_id: 7, quantity: 1, note: '' }));
     await rejected.addLine({ product_id: 7, quantity: 1, note: '' });
     assert.notEqual(rejectedBodies[0].operation_id, rejectedBodies[1].operation_id);
+}
+
+async function testApprovalSecretsAreNeverPersistedForRecovery() {
+    const deps = makeDeps({
+        request: async endpoint => {
+            if (endpoint.startsWith('/fnb/floor')) return floor();
+            throw new Error('offline');
+        },
+    });
+    const controller = createController(deps);
+    await controller.selectShop(1);
+    controller.seedSession(session());
+
+    await assert.rejects(controller.cancelLine(40, 1, {
+        resolution: 'WASTE',
+        reason: 'Món đã làm',
+        approval_token: 'approval-secret-must-not-persist',
+    }));
+
+    assert.equal(
+        [...deps.storage.values()].some(value => String(value).includes('approval-secret')),
+        false,
+    );
 }
 
 async function testCancelDecisionRequiredAfterNetworkFailureClearsPendingAndDraft() {
@@ -249,7 +311,7 @@ async function testCancelDecisionRequiredAfterNetworkFailureClearsPendingAndDraf
     });
 
     deps.renders.length = 0;
-    await assert.rejects(controller.cancelLine(40, 1));
+    await assert.rejects(controller.retryPending());
 
     assert.deepEqual(bodies[1], bodies[0]);
     assert.equal(controller.getState().pendingMutation, null);
@@ -298,9 +360,7 @@ async function testCancelConflictAfterNetworkFailureRequiresFreshUserDecision() 
         operation_id: 'operation-1',
     });
 
-    await assert.rejects(controller.cancelLine(40, 1, {
-        resolution: 'WASTE', reason: 'Món đã chế biến',
-    }));
+    await assert.rejects(controller.retryPending());
 
     assert.deepEqual(bodies[1], bodies[0]);
     assert.deepEqual(controller.getState().session, latest);
@@ -351,6 +411,45 @@ async function testLatestRevisionBodies() {
     await controller.sendSession();
     assert.equal(calls.at(-1).endpoint, '/fnb/sessions/30/send');
     assert.equal(calls.at(-1).body.expected_revision, 31);
+}
+
+async function testServeTicketUsesCurrentTicketAndSessionRevisions() {
+    const calls = [];
+    const liveFloor = floor();
+    liveFloor.areas[0].tables[0] = {
+        ...liveFloor.areas[0].tables[0],
+        state: 'SERVING',
+        session: { id: 30, revision: 13 },
+    };
+    const deps = makeDeps({
+        request: async (endpoint, method, body) => {
+            if (endpoint.startsWith('/fnb/floor')) return liveFloor;
+            calls.push({ endpoint, method, body });
+            if (endpoint === '/fnb/sessions/30') return session(13);
+            return { session_revision: 13, service_stage: 'SERVED' };
+        },
+    });
+    const controller = createController(deps);
+    await controller.selectShop(1);
+    controller.seedSession({
+        ...session(12),
+        service_stage: 'READY',
+        service_summary: { NEW: 0, IN_PROGRESS: 0, READY: 1, SERVED: 0 },
+        service_tickets: [{ id: 50, state_version: 4, service_stage: 'READY' }],
+    });
+
+    await controller.serveTicket(50);
+
+    assert.deepEqual(calls[0], {
+        endpoint: '/fnb/tickets/50/serve',
+        method: 'POST',
+        body: {
+            expected_state_version: 4,
+            expected_session_revision: 12,
+            operation_id: 'operation-1',
+        },
+    });
+    assert.equal(controller.getState().session.revision, 13);
 }
 
 async function testStationUpdateUsesCurrentFloorRevision() {
@@ -971,6 +1070,12 @@ async function testCheckoutFailureRecovery() {
             ambiguous.elements.fnbCashTendered.value = '999999';
             ambiguous.elements.fnbPayForm.emit('submit');
             await ambiguous.settle();
+            assert.equal(
+                ambiguous.calls.filter(call => call.endpoint === '/fnb/checks/1/pay').length,
+                1,
+            );
+            ambiguous.clickAction('retry-pending');
+            await ambiguous.settle();
             const payments = ambiguous.calls.filter(call => call.endpoint === '/fnb/checks/1/pay');
             assert.equal(payments.length, 2);
             assert.deepEqual(payments[1].body, originalBody);
@@ -1026,10 +1131,13 @@ Promise.resolve()
     .then(testPollingAndLifecycle)
     .then(testSessionAnnouncementsOnlyFollowMutations)
     .then(testConflictKeepsDraftAndUsesAuthoritativeSnapshot)
+    .then(testConflictReapplyKeepsOriginalAction)
     .then(testSingleFlightRetryAndDefinitiveFailure)
+    .then(testApprovalSecretsAreNeverPersistedForRecovery)
     .then(testCancelDecisionRequiredAfterNetworkFailureClearsPendingAndDraft)
     .then(testCancelConflictAfterNetworkFailureRequiresFreshUserDecision)
     .then(testLatestRevisionBodies)
+    .then(testServeTicketUsesCurrentTicketAndSessionRevisions)
     .then(testStationUpdateUsesCurrentFloorRevision)
     .then(testSetupMutationsAndAccess)
     .then(testCheckoutUsesLatestCheckAndSessionRevisions)

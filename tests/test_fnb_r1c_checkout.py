@@ -7,6 +7,43 @@ from fselling.services import loyalty_service
 from test_fnb_r1c_checks import op, sent_session
 
 
+def test_close_rejects_active_kitchen_ticket_without_releasing_table(client, db):
+    _, headers, session = sent_session(client, 1, station="KITCHEN")
+    primary = client.get(
+        f"/api/fnb/sessions/{session['id']}/checks", headers=headers
+    ).json()["checks"][0]
+    paid = client.post(
+        f"/api/fnb/checks/{primary['id']}/pay",
+        json={
+            "payment_method": "cash",
+            "cash_tendered_vnd": primary["total_vnd"],
+            "expected_revision": primary["revision"],
+            "expected_session_revision": session["revision"],
+            "operation_id": op("active-ticket-pay"),
+        },
+        headers=headers,
+    )
+    assert paid.status_code == 200, paid.text
+    result = paid.json()
+
+    rejected = client.post(
+        f"/api/fnb/sessions/{session['id']}/close",
+        json={
+            "expected_revision": result["session_revision"],
+            "operation_id": op("active-ticket-close"),
+        },
+        headers=headers,
+    )
+
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"]["code"] == "FNB_ACTIVE_TICKETS"
+    db.expire_all()
+    assert db.get(models.FnbServiceSession, session["id"]).status != "CLOSED"
+    assert db.query(models.FnbSessionTable).filter_by(
+        session_id=session["id"], released_at=None
+    ).count() == 1
+
+
 def test_cash_checkout_requires_explicit_tender_without_side_effects(client, db):
     ctx, headers, session = sent_session(client, 1)
     primary = client.get(
@@ -180,7 +217,7 @@ def test_debt_with_cash_tender_is_rejected_without_side_effects(client, db):
 
 
 def test_cash_checkout_transfers_provenance_once_and_closes_table(client, db):
-    ctx, headers, session = sent_session(client, 2)
+    ctx, headers, session = sent_session(client, 2, station="KITCHEN")
     primary = client.get(
         f"/api/fnb/sessions/{session['id']}/checks", headers=headers
     ).json()["checks"][0]
@@ -218,10 +255,54 @@ def test_cash_checkout_transfers_provenance_once_and_closes_table(client, db):
     allocation = db.get(models.FnbStockAllocation, transfer.allocation_id)
     assert allocation.state == "TRANSFERRED_TO_ORDER"
 
+    ticket = db.query(models.FnbKitchenTicket).filter_by(session_id=session["id"]).one()
+    started = client.post(
+        f"/api/fnb/tickets/{ticket.id}/start",
+        json={
+            "expected_state_version": ticket.state_version,
+            "expected_session_revision": result["session_revision"],
+            "operation_id": op("start"),
+        },
+        headers=headers,
+    )
+    assert started.status_code == 200, started.text
+    done = client.post(
+        f"/api/fnb/tickets/{ticket.id}/done",
+        json={
+            "expected_state_version": started.json()["state_version"],
+            "expected_session_revision": started.json()["session_revision"],
+            "operation_id": op("done"),
+        },
+        headers=headers,
+    )
+    assert done.status_code == 200, done.text
+
+    blocked = client.post(
+        f"/api/fnb/sessions/{session['id']}/close",
+        json={
+            "expected_revision": done.json()["session_revision"],
+            "operation_id": op("close-ready"),
+        },
+        headers=headers,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["code"] == "FNB_UNSERVED_TICKETS"
+
+    served = client.post(
+        f"/api/fnb/tickets/{ticket.id}/serve",
+        json={
+            "expected_state_version": done.json()["state_version"],
+            "expected_session_revision": done.json()["session_revision"],
+            "operation_id": op("serve"),
+        },
+        headers=headers,
+    )
+    assert served.status_code == 200, served.text
+
     closed = client.post(
         f"/api/fnb/sessions/{session['id']}/close",
         json={
-            "expected_revision": result["session_revision"],
+            "expected_revision": served.json()["session_revision"],
             "operation_id": op("close"),
         },
         headers=headers,
@@ -382,6 +463,87 @@ def test_split_checks_pay_once_each_and_conserve_stock_provenance(client, db):
     assert len({row.order_item_id for row in transfers}) == 2
     assert db.get(models.Product, ctx["product"]["id"]).stock == 7
     assert db.query(models.Order).filter(models.Order.id.in_(order_ids)).count() == 2
+
+
+def test_partially_settled_session_sends_new_items_to_supplemental_check(client, db):
+    ctx, headers, session = sent_session(client, 2)
+    primary = client.get(
+        f"/api/fnb/sessions/{session['id']}/checks", headers=headers
+    ).json()["checks"][0]
+    split = client.post(
+        f"/api/fnb/checks/{primary['id']}/split",
+        json={
+            "lines": [{"line_id": primary["lines"][0]["line_id"], "quantity": 1}],
+            "label": "Khách 2",
+            "expected_revision": primary["revision"],
+            "expected_session_revision": session["revision"],
+            "operation_id": op("partial-split"),
+        },
+        headers=headers,
+    ).json()
+    primary = next(row for row in split["checks"] if row["is_primary"])
+    paid = client.post(
+        f"/api/fnb/checks/{primary['id']}/pay",
+        json={
+            "payment_method": "cash",
+            "cash_tendered_vnd": primary["total_vnd"],
+            "expected_revision": primary["revision"],
+            "expected_session_revision": split["session_revision"],
+            "operation_id": op("partial-pay"),
+        },
+        headers=headers,
+    )
+    assert paid.status_code == 200, paid.text
+    paid_result = paid.json()
+    paid_order_id = paid_result["order"]["id"]
+    paid_total = paid_result["order"]["total_vnd"]
+
+    added = client.post(
+        f"/api/fnb/sessions/{session['id']}/lines",
+        json={
+            "product_id": ctx["product"]["id"],
+            "quantity": 1,
+            "expected_revision": paid_result["session_revision"],
+            "operation_id": op("partial-add"),
+        },
+        headers=headers,
+    )
+    assert added.status_code == 200, added.text
+    added_session = added.json()
+    new_line = added_session["lines"][-1]
+    send_payload = {
+        "expected_revision": added_session["revision"],
+        "operation_id": op("partial-send"),
+    }
+    sent = client.post(
+        f"/api/fnb/sessions/{session['id']}/send",
+        json=send_payload,
+        headers=headers,
+    )
+    assert sent.status_code == 200, sent.text
+    retry = client.post(
+        f"/api/fnb/sessions/{session['id']}/send",
+        json=send_payload,
+        headers=headers,
+    )
+    assert retry.json() == sent.json()
+
+    checks = client.get(
+        f"/api/fnb/sessions/{session['id']}/checks", headers=headers
+    ).json()["checks"]
+    old = next(row for row in checks if row["id"] == primary["id"])
+    supplemental = next(row for row in checks if row["is_primary"])
+    assert old["status"] == "PAID"
+    assert old["order_id"] == paid_order_id
+    assert old["total_vnd"] == paid_total
+    assert supplemental["id"] != old["id"]
+    assert supplemental["label"].startswith("Bill bổ sung")
+    assert supplemental["status"] == "OPEN"
+    assert [(row["line_id"], row["quantity"]) for row in supplemental["lines"]] == [
+        (new_line["id"], 1)
+    ]
+    assert supplemental["total_vnd"] == new_line["unit_price_vnd"]
+    assert db.get(models.Order, paid_order_id).total_amount == paid_total
 
 
 def test_paid_fnb_order_reuses_receipt_history_and_cash_shift(client):

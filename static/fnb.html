@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-title" content="F-Selling">
     <title data-i18n="fnb.page_title">Bán tại bàn | F-Selling</title>
     <link rel="stylesheet" href="/css/style.css?v=20260731-i18n4">
-    <link rel="stylesheet" href="/css/fnb-r1a.css?v=20260905-safety-r1">
+    <link rel="stylesheet" href="/css/fnb-r1a.css?v=20260907-plan2">
 </head>
 <body class="fnb-page">
     <header class="fnb-header">
@@ -77,6 +77,10 @@
                             <summary id="fnbSentTitle" data-i18n="fnb.sent.title">Đã gửi chế biến</summary>
                             <div id="fnbSentLines" class="fnb-draft-lines"></div>
                         </details>
+                        <section class="fnb-service-board" aria-labelledby="fnbServiceTitle">
+                            <h3 id="fnbServiceTitle" data-i18n="fnb.service.title">Tiến độ chế biến và giao món</h3>
+                            <div id="fnbServiceTickets"></div>
+                        </section>
                         <div id="fnbConflict" class="fnb-conflict" hidden></div>
                         <details id="fnbTableActions" class="fnb-table-actions" hidden>
                             <summary data-i18n="fnb.table_actions.title">Chuyển hoặc gộp bàn</summary>
@@ -120,7 +124,7 @@
             <div><p class="eyebrow" data-i18n="fnb.checkout.eyebrow">Thu tiền tại bàn</p><h2 id="fnbCheckoutTitle" data-i18n="fnb.checkout.title">Tách bill và thanh toán</h2></div>
             <form method="dialog"><button class="fnb-icon-button" value="cancel" aria-label="Đóng" data-i18n-aria-label="common.close">×</button></form>
         </div>
-        <p id="fnbCheckoutStatus" class="fnb-checkout-status" role="status" aria-live="polite"></p>
+        <p id="fnbCheckoutStatus" class="fnb-checkout-status" role="status" aria-live="polite" tabindex="-1"></p>
         <div class="fnb-checkout-layout">
             <nav id="fnbCheckList" class="fnb-check-list" aria-label="Danh sách bill" data-i18n-aria-label="fnb.checkout.bill_list"></nav>
             <section id="fnbCheckDetail" class="fnb-check-detail" aria-live="polite"></section>
@@ -246,10 +250,10 @@
     <div id="toast" role="status" aria-live="polite"></div>
     <script src="/js/vendor/i18next-26.3.6.min.js?v=20260731-i18n4"></script>
     <script src="/js/locales/common.js?v=20260901-fnb-r1b"></script>
-    <script src="/js/locales/fnb.js?v=20260905-safety-r1"></script>
+    <script src="/js/locales/fnb.js?v=20260907-plan2"></script>
     <script src="/js/i18n.js?v=20260731-i18n4"></script>
     <script src="/js/api.js?v=20260901-fnb-r1a&amp;g=20260813-i09-g2h2"></script>
-    <script src="/js/fnb-r1a.js?v=20260906-approval-refresh"></script>
+    <script src="/js/fnb-r1a.js?v=20260907-plan2"></script>
     <script src="/js/pwa.js?v=20260806-pwa"></script>
 </body>
 </html>

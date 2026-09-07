@@ -73,10 +73,15 @@ def test_in_progress_cancel_requires_bound_one_use_manager_approval(client, db):
     ticket = session["tickets"][0]
     started = client.post(
         f"/api/fnb/tickets/{ticket['id']}/start",
-        json={"expected_state_version": 0, "operation_id": op("start")},
+        json={
+            "expected_state_version": 0,
+            "expected_session_revision": session["revision"],
+            "operation_id": op("start"),
+        },
         headers=auth(ctx["token"]),
     )
     assert started.status_code == 200
+    session["revision"] = started.json()["session_revision"]
     pin_set = client.patch(
         f"/api/fnb/shops/{ctx['shop_id']}/manager-pin",
         json={"pin": "2468"}, headers=auth(ctx["token"]),
@@ -186,6 +191,81 @@ def test_in_progress_cancel_requires_bound_one_use_manager_approval(client, db):
     )
     assert reused.status_code == 403
     assert reused.json()["detail"]["code"] == "FNB_APPROVAL_INVALID"
+
+
+def test_served_item_cannot_be_restocked(client, db):
+    ctx, session = sent_session(client, db)
+    headers = auth(ctx["token"])
+    ticket = session["tickets"][0]
+    started = client.post(
+        f"/api/fnb/tickets/{ticket['id']}/start",
+        json={
+            "expected_state_version": ticket["state_version"],
+            "expected_session_revision": session["revision"],
+            "operation_id": op("served-start"),
+        },
+        headers=headers,
+    ).json()
+    done = client.post(
+        f"/api/fnb/tickets/{ticket['id']}/done",
+        json={
+            "expected_state_version": started["state_version"],
+            "expected_session_revision": started["session_revision"],
+            "operation_id": op("served-done"),
+        },
+        headers=headers,
+    ).json()
+    served = client.post(
+        f"/api/fnb/tickets/{ticket['id']}/serve",
+        json={
+            "expected_state_version": done["state_version"],
+            "expected_session_revision": done["session_revision"],
+            "operation_id": op("served-serve"),
+        },
+        headers=headers,
+    ).json()
+    assert client.patch(
+        f"/api/fnb/shops/{ctx['shop_id']}/manager-pin",
+        json={"pin": "2468"},
+        headers=headers,
+    ).status_code == 200
+    approval = client.post(
+        "/api/fnb/manager-approvals",
+        json={
+            "shop_id": ctx["shop_id"],
+            "approver_username": ctx["username"],
+            "pin": "2468",
+            "action": "CANCEL_SENT_LINE",
+            "entity_type": "SESSION",
+            "entity_id": session["id"],
+            "revision": served["session_revision"],
+        },
+        headers=headers,
+    ).json()
+    line = session["lines"][0]
+
+    rejected = client.post(
+        f"/api/fnb/sessions/{session['id']}/cancel-line",
+        json={
+            "line_id": line["id"],
+            "quantity": 1,
+            "expected_line_version": line["state_version"],
+            "expected_revision": served["session_revision"],
+            "operation_id": op("served-restock"),
+            "resolution": "RESTOCK",
+            "reason": "Khách trả món đã nhận",
+            "approval_token": approval["approval_token"],
+        },
+        headers=headers,
+    )
+
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"]["code"] == "FNB_SERVED_RESTOCK_FORBIDDEN"
+    db.expire_all()
+    assert db.get(models.Product, ctx["product"]["id"]).stock == 8
+    assert db.query(models.FnbStockAllocation).filter_by(
+        session_id=session["id"], state="CONSUMED"
+    ).count() == 1
 
 
 def test_manager_pin_failures_are_rate_limited_without_storing_pin(client, db):

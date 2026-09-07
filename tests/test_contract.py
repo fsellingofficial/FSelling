@@ -254,6 +254,8 @@ ROUTES_BO_SUNG = {
     ("POST", "/api/fnb/tickets/{ticket_id}/start"),
     ("POST", "/api/fnb/tickets/{ticket_id}/done"),
     ("POST", "/api/fnb/tickets/{ticket_id}/out-of-stock"),
+    ("POST", "/api/fnb/tickets/{ticket_id}/resume"),
+    ("POST", "/api/fnb/tickets/{ticket_id}/serve"),
     ("PATCH", "/api/fnb/shops/{shop_id}/manager-pin"),
     ("POST", "/api/fnb/manager-approvals"),
     # F&B R1C: bill, split, provisional receipt, payment and safe table close.

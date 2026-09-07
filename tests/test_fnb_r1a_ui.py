@@ -55,12 +55,13 @@ def test_fnb_page_and_assets_are_wired(client):
         "fnbVariantList",
         "fnbCategoryTabs",
         "fnbCheckoutHint",
+        "fnbServiceTickets",
     ):
         assert f'id="{element_id}"' in html
-    assert "/css/fnb-r1a.css?v=20260905-safety-r1" in html
+    assert "/css/fnb-r1a.css?v=20260907-plan2" in html
     assert 'aria-describedby="fnbCashTenderedHelp fnbCashTenderedError"' in html
-    assert "/js/locales/fnb.js?v=20260905-safety-r1" in html
-    assert "/js/fnb-r1a.js?v=20260906-approval-refresh" in html
+    assert "/js/locales/fnb.js?v=20260907-plan2" in html
+    assert "/js/fnb-r1a.js?v=20260907-plan2" in html
     source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
     assert "values.voucher_code = voucherCode" in source
     assert "values.loyalty_points_to_use = loyaltyPoints" in source
@@ -72,6 +73,9 @@ def test_fnb_page_and_assets_are_wired(client):
     assert "FNB_CANCELLATION_DECISION_REQUIRED" in source
     assert "FNB_APPROVAL_REQUIRED" in source
     assert "function resetApprovalDialog()" in source
+    assert 'data-action="serve-ticket"' in source
+    assert "expected_session_revision: Number(state.session.revision)" in source
+    assert "controller.retryPending()" in source
     assert client.get("/fnb.html", follow_redirects=False).headers["location"] == "/fnb"
     api_source = (ROOT / "static/js/api.js").read_text(encoding="utf-8")
     assert "error.detail =" in api_source
@@ -81,13 +85,19 @@ def test_fnb_station_page_and_role_routing_are_wired(client):
     page = client.get("/fnb/station/kitchen")
     assert page.status_code == 200
     assert 'id="fnbStationTickets"' in page.text
+    assert 'id="fnbStationConnection"' in page.text
     assert "/css/fnb-station-r1b.css?" in page.text
-    assert "/js/fnb-station-r1b.js?v=20260903-r3" in page.text
+    assert "/js/fnb-station-r1b.js?v=20260907-plan2" in page.text
     assert "/js/i18n.js?" in page.text
 
     source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
     assert "['KITCHEN', 'BAR'].includes(staffRole)" in source
     assert "document.querySelectorAll('.fnb-queue-link')" in source
+    station_source = (ROOT / "static/js/fnb-station-r1b.js").read_text(encoding="utf-8")
+    assert "expected_session_revision" in station_source
+    assert "controller.retryPending()" in station_source
+    assert 'data-action="resume"' in station_source
+    assert "Sẵn sàng giao" in station_source
 
 
 def test_fnb_role_translations_use_one_fresh_common_catalog_url():
@@ -170,6 +180,11 @@ def test_owner_edit_switch_and_bilingual_contracts():
         "fnb.cancel.action_required",
         "fnb.cancel.changed",
         "fnb.cancel.reason_required",
+        "fnb.service.waiting",
+        "fnb.service.ready",
+        "fnb.service.served",
+        "fnb.service.mark_served",
+        "fnb.checkout.service_block",
     } <= vi_keys
 
     for path, keys in (

@@ -871,6 +871,23 @@ def serialize_session(db: Session, session: models.FnbServiceSession) -> dict:
         raise fnb_error(
             400, "FNB_AMOUNT_TOO_LARGE", "Tổng tiền vượt giới hạn hỗ trợ"
         ) from exc
+    tickets = (
+        db.query(models.FnbKitchenTicket)
+        .filter(models.FnbKitchenTicket.session_id == session.id)
+        .order_by(models.FnbKitchenTicket.id)
+        .all()
+    )
+    service_tickets = [_ticket_result(db, ticket) for ticket in tickets]
+    service_summary = {stage: 0 for stage in ("NEW", "IN_PROGRESS", "READY", "SERVED")}
+    for ticket in service_tickets:
+        stage = ticket["service_stage"]
+        if stage in service_summary:
+            service_summary[stage] += 1
+    service_stage = "DIRECT"
+    for stage in ("READY", "IN_PROGRESS", "NEW", "SERVED"):
+        if service_summary[stage]:
+            service_stage = stage
+            break
     return {
         "id": session.id,
         "shop_id": session.shop_id,
@@ -881,6 +898,11 @@ def serialize_session(db: Session, session: models.FnbServiceSession) -> dict:
         "lines": serialized_lines,
         "subtotal_vnd": subtotal,
         "unsent_quantity": sum(line["unsent_quantity"] for line in serialized_lines),
+        "service_stage": service_stage,
+        "service_summary": service_summary,
+        "service_tickets": [
+            row for row in service_tickets if row["service_stage"] != "CANCELLED"
+        ],
     }
 
 
@@ -905,6 +927,26 @@ def _primary_check(
         db.add(check)
         db.flush()
     return check
+
+
+def _ordering_check(
+    db: Session, session: models.FnbServiceSession
+) -> models.FnbServiceCheck:
+    primary = _primary_check(db, session, create=True)
+    if primary.status == "OPEN":
+        return primary
+    primary.is_primary = False
+    db.flush()
+    sequence = db.query(models.FnbServiceCheck).filter_by(session_id=session.id).count()
+    supplemental = models.FnbServiceCheck(
+        session_id=session.id,
+        label=f"Bill bổ sung {sequence}",
+        is_primary=True,
+        status="OPEN",
+    )
+    db.add(supplemental)
+    db.flush()
+    return supplemental
 
 
 def _adjustment_amount(kind: str, value: int, subtotal: int, *, discount: bool) -> int:
@@ -1790,6 +1832,45 @@ def close_session(
             session_id=session.id, state="CONSUMED"
         ).first() is not None:
             raise fnb_error(409, "FNB_ALLOCATION_UNSETTLED", "Vẫn còn tồn kho chưa gắn vào chứng từ")
+        active_tickets = (
+            db.query(models.FnbKitchenTicket)
+            .filter(
+                models.FnbKitchenTicket.session_id == session.id,
+                models.FnbKitchenTicket.status.in_(("NEW", "IN_PROGRESS")),
+            )
+            .order_by(models.FnbKitchenTicket.id)
+            .all()
+        )
+        if active_tickets:
+            raise fnb_error(
+                409,
+                "FNB_ACTIVE_TICKETS",
+                "Vẫn còn món đang chờ bếp/bar",
+                tickets=[
+                    {"id": row.id, "station": row.station, "status": row.status}
+                    for row in active_tickets
+                ],
+            )
+        ready_tickets = (
+            db.query(models.FnbKitchenTicket)
+            .filter(
+                models.FnbKitchenTicket.session_id == session.id,
+                models.FnbKitchenTicket.status == "DONE",
+                models.FnbKitchenTicket.served_at.is_(None),
+            )
+            .order_by(models.FnbKitchenTicket.id)
+            .all()
+        )
+        if ready_tickets:
+            raise fnb_error(
+                409,
+                "FNB_UNSERVED_TICKETS",
+                "Vẫn còn món sẵn sàng nhưng chưa giao",
+                tickets=[
+                    {"id": row.id, "station": row.station, "status": "READY"}
+                    for row in ready_tickets
+                ],
+            )
         now = datetime.datetime.utcnow()
         before = serialize_session(db, session)
         for link in _active_links(db, session.id):
@@ -1867,6 +1948,15 @@ def _line_for_access(
 def _require_open(session: models.FnbServiceSession) -> None:
     if session.status != "OPEN":
         raise fnb_error(409, "FNB_SESSION_NOT_OPEN", "Phiên phục vụ không còn mở")
+
+
+def _require_service_mutable(session: models.FnbServiceSession) -> None:
+    if session.status not in ("OPEN", "PARTIALLY_SETTLED"):
+        raise fnb_error(
+            409,
+            "FNB_SESSION_NOT_SERVICEABLE",
+            "Phiên bàn không còn nhận thay đổi phục vụ",
+        )
 
 
 def _require_table_version(
@@ -1998,7 +2088,7 @@ def add_line(
             return existing
         if not bool(shop.fnb_enabled):
             raise fnb_error(409, "FNB_DISABLED", "Cửa hàng chưa bật bán tại bàn")
-        _require_open(session)
+        _require_service_mutable(session)
         require_session_revision(db, session, request.expected_revision)
         product = (
             db.query(models.Product)
@@ -2047,23 +2137,42 @@ def add_line(
 
 
 def _ticket_result(db: Session, ticket: models.FnbKitchenTicket) -> dict:
+    session = db.get(models.FnbServiceSession, ticket.session_id)
     items = (
         db.query(models.FnbKitchenTicketItem)
         .filter(models.FnbKitchenTicketItem.ticket_id == ticket.id)
         .order_by(models.FnbKitchenTicketItem.id)
         .all()
     )
-    session = db.get(models.FnbServiceSession, ticket.session_id)
-    tables = [row["name"] for row in serialize_session(db, session)["tables"]]
+    tables = [
+        row[0]
+        for row in db.query(models.FnbTable.name)
+        .join(models.FnbSessionTable, models.FnbSessionTable.table_id == models.FnbTable.id)
+        .filter(
+            models.FnbSessionTable.session_id == ticket.session_id,
+            models.FnbSessionTable.released_at.is_(None),
+        )
+        .order_by(models.FnbSessionTable.id)
+        .all()
+    ]
+    service_stage = ticket.status
+    if ticket.served_at is not None:
+        service_stage = "SERVED"
+    elif ticket.status == "DONE":
+        service_stage = "READY"
     return {
         "id": ticket.id,
         "shop_id": ticket.shop_id,
         "session_id": ticket.session_id,
+        "session_revision": int(session.revision or 0) if session else 0,
         "station": ticket.station,
         "sequence": int(ticket.sequence),
         "status": ticket.status,
+        "service_stage": service_stage,
         "state_version": int(ticket.state_version or 0),
         "out_of_stock_reason": ticket.out_of_stock_reason,
+        "served_by_user_id": ticket.served_by_user_id,
+        "served_at": ticket.served_at.isoformat() + "Z" if ticket.served_at else None,
         "created_at": ticket.created_at.isoformat() + "Z",
         "tables": tables,
         "items": [
@@ -2102,7 +2211,7 @@ def send_session(
             return existing
         if not bool(shop.fnb_enabled):
             raise fnb_error(409, "FNB_DISABLED", "Cửa hàng chưa bật bán tại bàn")
-        _require_open(session)
+        _require_service_mutable(session)
         require_session_revision(db, session, request.expected_revision)
         lines = (
             db.query(models.FnbSessionLine)
@@ -2209,7 +2318,7 @@ def send_session(
             line.sent_quantity = int(line.sent_quantity or 0) + quantity
             line.state_version = int(line.state_version or 0) + 1
 
-            primary = _primary_check(db, session, create=True)
+            primary = _ordering_check(db, session)
             check_line = (
                 db.query(models.FnbCheckLine)
                 .filter(
@@ -2302,6 +2411,7 @@ def transition_ticket(
         "start": ("FNB_TICKET_START", "NEW", "IN_PROGRESS"),
         "done": ("FNB_TICKET_DONE", "IN_PROGRESS", "DONE"),
         "out-of-stock": ("FNB_TICKET_OUT_OF_STOCK", None, None),
+        "resume": ("FNB_TICKET_RESUME", None, None),
     }
     if transition not in transitions:
         raise fnb_error(400, "FNB_TICKET_ACTION_INVALID", "Thao tác phiếu không hợp lệ")
@@ -2344,6 +2454,10 @@ def transition_ticket(
                 state_version=int(ticket.state_version or 0),
                 snapshot=_ticket_result(db, ticket),
             )
+        session = db.get(models.FnbServiceSession, ticket.session_id)
+        if session is None:
+            raise fnb_error(404, "FNB_SESSION_NOT_FOUND", "Không tìm thấy phiên phục vụ")
+        require_session_revision(db, session, request.expected_session_revision)
         if transition == "out-of-stock":
             reason = _normalize_note(request.reason)
             if not reason:
@@ -2351,11 +2465,26 @@ def transition_ticket(
             if ticket.status not in ("NEW", "IN_PROGRESS"):
                 raise fnb_error(409, "FNB_TICKET_CLOSED", "Phiếu đã hoàn tất")
             ticket.out_of_stock_reason = reason
+        elif transition == "resume":
+            if request.reason is not None:
+                raise fnb_error(400, "FNB_REASON_NOT_ALLOWED", "Thao tác này không cần lý do")
+            if ticket.status not in ("NEW", "IN_PROGRESS"):
+                raise fnb_error(409, "FNB_TICKET_CLOSED", "Phiếu đã hoàn tất")
+            if not ticket.out_of_stock_reason:
+                raise fnb_error(409, "FNB_TICKET_NOT_OUT_OF_STOCK", "Phiếu không báo hết món")
+            ticket.out_of_stock_reason = None
         else:
             if request.reason is not None:
                 raise fnb_error(400, "FNB_REASON_NOT_ALLOWED", "Thao tác này không cần lý do")
             if ticket.status != required_status:
                 raise fnb_error(409, "FNB_TICKET_STATE_INVALID", "Trạng thái phiếu không phù hợp")
+            if transition == "done" and ticket.out_of_stock_reason:
+                raise fnb_error(
+                    409,
+                    "FNB_TICKET_OUT_OF_STOCK",
+                    "Cần tiếp tục chế biến trước khi báo sẵn sàng",
+                    snapshot=_ticket_result(db, ticket),
+                )
             ticket.status = next_status
             now = datetime.datetime.utcnow()
             if transition == "start":
@@ -2365,10 +2494,12 @@ def transition_ticket(
                 ticket.done_by_user_id = current_user.id
                 ticket.done_at = now
         ticket.state_version = int(ticket.state_version or 0) + 1
+        session.revision = int(session.revision or 0) + 1
         shop.fnb_revision = int(shop.fnb_revision or 0) + 1
         db.flush()
         result = _ticket_result(db, ticket)
         result["revision"] = int(shop.fnb_revision or 0)
+        result["session_revision"] = int(session.revision or 0)
         return _finish(
             db,
             current_user,
@@ -2379,6 +2510,77 @@ def transition_ticket(
             session_id=ticket.session_id,
             after=result,
             reason=ticket.out_of_stock_reason if transition == "out-of-stock" else None,
+        )
+    except Exception:
+        db.rollback()
+        raise
+
+
+def serve_ticket(
+    db: Session,
+    current_user: models.User,
+    ticket_id: int,
+    request: FnbTicketTransition,
+) -> dict:
+    action = "FNB_TICKET_SERVE"
+    fingerprint = operation_fingerprint(action, _payload(request, ticket_id=ticket_id))
+    try:
+        ticket = db.get(models.FnbKitchenTicket, ticket_id)
+        if ticket is None:
+            raise fnb_error(404, "FNB_TICKET_NOT_FOUND", "Không tìm thấy phiếu")
+        shop_id = int(ticket.shop_id)
+        require_fnb_access(db, shop_id, current_user, PERMISSION_FNB_SERVICE)
+        _prepare_locked_shop(db, shop_id)
+        shop = require_fnb_access(db, shop_id, current_user, PERMISSION_FNB_SERVICE)
+        existing = _existing_operation(db, shop_id, request.operation_id, fingerprint)
+        if existing is not None:
+            db.rollback()
+            return existing
+        ticket = db.query(models.FnbKitchenTicket).filter_by(
+            id=ticket_id, shop_id=shop_id
+        ).first()
+        if ticket is None:
+            raise fnb_error(404, "FNB_TICKET_NOT_FOUND", "Không tìm thấy phiếu")
+        if int(ticket.state_version or 0) != request.expected_state_version:
+            raise fnb_error(
+                409,
+                "FNB_TICKET_CHANGED",
+                "Phiếu vừa được cập nhật",
+                state_version=int(ticket.state_version or 0),
+                snapshot=_ticket_result(db, ticket),
+            )
+        session = db.get(models.FnbServiceSession, ticket.session_id)
+        if session is None:
+            raise fnb_error(404, "FNB_SESSION_NOT_FOUND", "Không tìm thấy phiên phục vụ")
+        require_session_revision(db, session, request.expected_session_revision)
+        if request.reason is not None:
+            raise fnb_error(400, "FNB_REASON_NOT_ALLOWED", "Thao tác này không cần lý do")
+        if ticket.status != "DONE" or ticket.served_at is not None:
+            raise fnb_error(
+                409,
+                "FNB_TICKET_NOT_READY",
+                "Món chưa ở trạng thái sẵn sàng giao",
+                snapshot=_ticket_result(db, ticket),
+            )
+        now = datetime.datetime.utcnow()
+        ticket.served_by_user_id = current_user.id
+        ticket.served_at = now
+        ticket.state_version = int(ticket.state_version or 0) + 1
+        session.revision = int(session.revision or 0) + 1
+        shop.fnb_revision = int(shop.fnb_revision or 0) + 1
+        db.flush()
+        result = _ticket_result(db, ticket)
+        result["revision"] = int(shop.fnb_revision or 0)
+        result["session_revision"] = int(session.revision or 0)
+        return _finish(
+            db,
+            current_user,
+            action,
+            request.operation_id,
+            fingerprint,
+            result,
+            session_id=ticket.session_id,
+            after=result,
         )
     except Exception:
         db.rollback()
@@ -2405,7 +2607,7 @@ def update_line(
             return existing
         if not bool(shop.fnb_enabled):
             raise fnb_error(409, "FNB_DISABLED", "Cửa hàng chưa bật bán tại bàn")
-        _require_open(session)
+        _require_service_mutable(session)
         require_session_revision(db, session, request.expected_revision)
         if int(line.state_version or 0) != request.expected_line_version:
             raise fnb_error(
@@ -2584,7 +2786,7 @@ def cancel_line(
             return existing
         if not bool(shop.fnb_enabled):
             raise fnb_error(409, "FNB_DISABLED", "Cửa hàng chưa bật bán tại bàn")
-        _require_open(session)
+        _require_service_mutable(session)
         require_session_revision(db, session, request.expected_revision)
         line = (
             db.query(models.FnbSessionLine)
@@ -2643,6 +2845,25 @@ def cancel_line(
                         400,
                         "FNB_CANCELLATION_DECISION_REQUIRED",
                         "Cần chọn hoàn tồn hoặc hao hụt và nhập lý do",
+                    )
+                served = (
+                    db.query(models.FnbKitchenTicket.id)
+                    .join(
+                        models.FnbKitchenTicketItem,
+                        models.FnbKitchenTicketItem.ticket_id == models.FnbKitchenTicket.id,
+                    )
+                    .filter(
+                        models.FnbKitchenTicketItem.id.in_(item_ids),
+                        models.FnbKitchenTicket.served_at.is_not(None),
+                    )
+                    .first()
+                    is not None
+                )
+                if served and request.resolution == "RESTOCK":
+                    raise fnb_error(
+                        409,
+                        "FNB_SERVED_RESTOCK_FORBIDDEN",
+                        "Món đã giao không thể hoàn lại tồn kho",
                     )
                 approval = _approval_for_sent_cancel(
                     db, current_user, session, request.approval_token
@@ -2707,7 +2928,7 @@ def move_table(
             return existing
         if not bool(shop.fnb_enabled):
             raise fnb_error(409, "FNB_DISABLED", "Cửa hàng chưa bật bán tại bàn")
-        _require_open(session)
+        _require_service_mutable(session)
         require_session_revision(db, session, request.expected_revision)
         source_link = (
             db.query(models.FnbSessionTable)
@@ -2766,8 +2987,28 @@ def move_table(
 def session_has_only_r1a_drafts(
     db: Session, session: models.FnbServiceSession
 ) -> bool:
-    # ponytail: R1A has no ticket/check tables; replace with explicit queries in R1B.
-    return True
+    lines = db.query(models.FnbSessionLine).filter_by(session_id=session.id).all()
+    if any(int(row.sent_quantity or 0) or int(row.sent_cancelled_quantity or 0) for row in lines):
+        return False
+    if db.query(models.FnbKitchenTicket).filter_by(session_id=session.id).first() is not None:
+        return False
+    if db.query(models.FnbStockAllocation).filter_by(session_id=session.id).first() is not None:
+        return False
+    checks = db.query(models.FnbServiceCheck).filter_by(session_id=session.id).all()
+    if any(
+        row.status != "OPEN"
+        or row.order_id is not None
+        or int(row.subtotal_vnd or 0)
+        or int(row.discount_vnd or 0)
+        or int(row.service_charge_vnd or 0)
+        or int(row.total_vnd or 0)
+        for row in checks
+    ):
+        return False
+    check_ids = [row.id for row in checks]
+    return not check_ids or db.query(models.FnbCheckLine).filter(
+        models.FnbCheckLine.check_id.in_(check_ids)
+    ).first() is None
 
 
 def merge_table(
@@ -2794,7 +3035,7 @@ def merge_table(
             return existing
         if not bool(shop.fnb_enabled):
             raise fnb_error(409, "FNB_DISABLED", "Cửa hàng chưa bật bán tại bàn")
-        _require_open(source)
+        _require_service_mutable(source)
         require_session_revision(db, source, request.expected_revision)
         target_table = (
             db.query(models.FnbTable)
@@ -2845,7 +3086,7 @@ def merge_table(
             if not session_has_only_r1a_drafts(db, target):
                 raise fnb_error(
                     409,
-                    "FNB_SESSION_HAS_FUTURE_ARTIFACTS",
+                    "FNB_TARGET_SESSION_HAS_ARTIFACTS",
                     "Phiên đích không thể gộp",
                 )
             target_links = _active_links(db, target.id)
@@ -3001,6 +3242,8 @@ def get_floor(
                 "opened_at": session.opened_at.isoformat() + "Z",
                 "subtotal_vnd": snapshot["subtotal_vnd"],
                 "unsent_quantity": snapshot["unsent_quantity"],
+                "service_stage": snapshot["service_stage"],
+                "service_summary": snapshot["service_summary"],
                 "table_count": len(snapshot["tables"]),
             }
     return {

@@ -74,6 +74,7 @@
             requestEpoch: 0,
             pendingMutation: null,
             recoverableDraft: null,
+            recoverableAction: null,
             pollTimer: null,
             disposed: false,
         };
@@ -99,20 +100,37 @@
             return `fnb.draft:${deps.username || 'anonymous'}:${state.shopId}:${state.session?.id || 'none'}`;
         }
 
+        function pendingKey(sessionId = state.session?.id, shopId = state.shopId) {
+            return `fnb.pending:${deps.username || 'anonymous'}:${shopId}:${sessionId || 'none'}`;
+        }
+
+        function storageGet(key) {
+            return deps.storage?.get?.(key) ?? deps.storage?.getItem?.(key);
+        }
+
+        function storageSet(key, value) {
+            deps.storage?.set?.(key, value);
+            deps.storage?.setItem?.(key, value);
+        }
+
+        function storageDelete(key) {
+            deps.storage?.delete?.(key);
+            deps.storage?.removeItem?.(key);
+        }
+
         function saveDraft(value) {
             if (!state.session?.id) return;
-            deps.storage?.set?.(draftKey(), JSON.stringify(value));
+            storageSet(draftKey(), JSON.stringify(value));
         }
 
         function clearDraft() {
             if (!state.session?.id) return;
-            deps.storage?.delete?.(draftKey());
-            deps.storage?.removeItem?.(draftKey());
+            storageDelete(draftKey());
         }
 
         function getDraft() {
             if (!state.session?.id) return null;
-            const raw = deps.storage?.get?.(draftKey()) ?? deps.storage?.getItem?.(draftKey());
+            const raw = storageGet(draftKey());
             if (!raw) return null;
             try { return JSON.parse(raw); } catch (error) { return null; }
         }
@@ -122,6 +140,7 @@
             const result = await deps.request(`/fnb/sessions/${Number(sessionId)}`, 'GET');
             if (!result || state.disposed || expectedShop !== state.shopId) return;
             state.session = result;
+            restorePending();
             deps.render({ type: 'session', value: result, draft: getDraft(), saved: false });
             return result;
         }
@@ -221,6 +240,7 @@
             state.session = null;
             state.checks = null;
             state.recoverableDraft = null;
+            state.recoverableAction = null;
             state.pendingMutation = null;
             pendingPromise = null;
             deps.render({ type: 'loading' });
@@ -228,8 +248,58 @@
         }
 
         function clearPending() {
+            if (state.pendingMutation?.storageKey) {
+                storageDelete(state.pendingMutation.storageKey);
+            }
             state.pendingMutation = null;
             pendingPromise = null;
+        }
+
+        function hasRecoverySecret(value) {
+            if (!value || typeof value !== 'object') return false;
+            return Object.entries(value).some(([key, item]) =>
+                ['approval_token', 'pin'].includes(key)
+                || (item && typeof item === 'object' && hasRecoverySecret(item))
+            );
+        }
+
+        function persistPending() {
+            const mutation = state.pendingMutation;
+            if (!mutation || !state.session?.id || hasRecoverySecret(mutation.body)) return;
+            const key = pendingKey(state.session.id, state.shopId);
+            mutation.storageKey = key;
+            storageSet(key, JSON.stringify({
+                action: mutation.action,
+                endpoint: mutation.endpoint,
+                method: mutation.method,
+                body: mutation.body,
+                attempt: mutation.attempt,
+                scope: mutation.scope,
+                shopId: Number(state.shopId),
+                sessionId: Number(state.session.id),
+            }));
+        }
+
+        function restorePending() {
+            if (state.pendingMutation || !state.session?.id) return;
+            const key = pendingKey(state.session.id, state.shopId);
+            const raw = storageGet(key);
+            if (!raw) return;
+            try {
+                const mutation = JSON.parse(raw);
+                if (
+                    Number(mutation.shopId) !== Number(state.shopId)
+                    || Number(mutation.sessionId) !== Number(state.session.id)
+                    || hasRecoverySecret(mutation.body)
+                ) {
+                    storageDelete(key);
+                    return;
+                }
+                state.pendingMutation = { ...mutation, storageKey: key, inFlight: false };
+                deps.render({ type: 'mutation-recovery', value: clone(state.pendingMutation) });
+            } catch (error) {
+                storageDelete(key);
+            }
         }
 
         function isDefinitive4xx(error) {
@@ -263,6 +333,7 @@
                     );
                     clearPending();
                     state.recoverableDraft = null;
+                    state.recoverableAction = null;
                     if (mutation.scope === 'session') {
                         clearDraft();
                         if (result?.status === 'CANCELLED') {
@@ -298,6 +369,8 @@
                         state.session = null;
                         state.checks = null;
                         deps.render({ type: 'session-closed', value: result });
+                    } else if (mutation.scope === 'ticket') {
+                        await loadSession(mutation.attempt.session_id);
                     } else {
                         if (Number.isInteger(Number(result?.fnb_revision))) {
                             state.floorRevision = Number(result.fnb_revision);
@@ -339,7 +412,17 @@
                     ) {
                         state.session = error.detail.snapshot;
                         state.recoverableDraft = clone(mutation.attempt);
+                        state.recoverableAction = mutation.action;
                         saveDraft(state.recoverableDraft);
+                        deps.render({
+                            type: 'conflict',
+                            value: state.session,
+                            draft: state.recoverableDraft,
+                        });
+                    } else if (mutation.action === 'serve-ticket' && code === 'FNB_TICKET_CHANGED') {
+                        await loadSession(mutation.attempt.session_id);
+                        state.recoverableDraft = clone(mutation.attempt);
+                        state.recoverableAction = mutation.action;
                         deps.render({
                             type: 'conflict',
                             value: state.session,
@@ -367,7 +450,8 @@
                         deps.render({ type: 'checkout-error', error });
                     } else {
                         state.recoverableDraft = clone(mutation.attempt);
-                        saveDraft(state.recoverableDraft);
+                        state.recoverableAction = mutation.action;
+                        if (definitive) saveDraft(state.recoverableDraft);
                         deps.render({
                             type: 'mutation-error',
                             error,
@@ -377,6 +461,7 @@
                     if (!definitive && state.pendingMutation) {
                         state.pendingMutation.inFlight = false;
                         pendingPromise = null;
+                        persistPending();
                     }
                     throw error;
                 }
@@ -385,7 +470,12 @@
         }
 
         function startMutation(action, endpoint, method, body, attempt, scope) {
-            if (state.pendingMutation) return performPending();
+            if (state.pendingMutation) {
+                const error = new Error('A mutation is already pending');
+                error.code = 'FNB_MUTATION_PENDING';
+                deps.render({ type: 'mutation-blocked', value: clone(state.pendingMutation) });
+                return Promise.reject(error);
+            }
             const operationId = uuid();
             state.pendingMutation = {
                 action,
@@ -397,7 +487,25 @@
                 scope,
                 inFlight: false,
             };
+            persistPending();
             return performPending();
+        }
+
+        function retryPending() {
+            return performPending();
+        }
+
+        function reapplyRecoverable() {
+            const draft = clone(state.recoverableDraft);
+            switch (state.recoverableAction) {
+                case 'add-line': return addLine(draft);
+                case 'update-line': return updateLine(draft.line_id, draft);
+                case 'move-table': return moveTable(draft.from_table_id, draft.to_table_id);
+                case 'merge-table': return mergeTable(draft.target_table_id);
+                case 'send-session': return sendSession();
+                case 'serve-ticket': return serveTicket(draft.ticket_id);
+                default: return Promise.reject(new Error('No recoverable mutation'));
+            }
         }
 
         function createArea(values) {
@@ -486,6 +594,21 @@
             return startMutation('send-session', `/fnb/sessions/${Number(state.session.id)}/send`, 'POST', {
                 expected_revision: Number(state.session.revision),
             }, { session_id: Number(state.session.id) }, 'session');
+        }
+
+        function serveTicket(ticketId) {
+            const ticket = (state.session?.service_tickets || []).find(
+                row => Number(row.id) === Number(ticketId),
+            );
+            if (!ticket) return Promise.reject(new Error('Ticket unavailable'));
+            const attempt = {
+                ticket_id: Number(ticketId),
+                session_id: Number(state.session.id),
+            };
+            return startMutation('serve-ticket', `/fnb/tickets/${Number(ticketId)}/serve`, 'POST', {
+                expected_state_version: Number(ticket.state_version),
+                expected_session_revision: Number(state.session.revision),
+            }, attempt, 'ticket');
         }
 
         function updateProductStation(productId, station) {
@@ -583,6 +706,8 @@
             saveDraft,
             getDraft,
             clearDraft,
+            retryPending,
+            reapplyRecoverable,
             dispose,
             createArea,
             updateArea,
@@ -593,6 +718,7 @@
             updateLine,
             cancelLine,
             sendSession,
+            serveTicket,
             updateProductStation,
             moveTable,
             mergeTable,
@@ -639,6 +765,7 @@
             'fnbAreaForm', 'fnbAreaName', 'fnbTableForm', 'fnbTableArea', 'fnbTableName',
             'fnbSessionPanel', 'fnbSessionBackdrop', 'fnbSessionClose', 'fnbSessionTitle',
             'fnbProductSearch', 'fnbCategoryTabs', 'fnbProductGrid', 'fnbDraftLines', 'fnbSentLines', 'fnbSubtotal',
+            'fnbServiceTickets',
             'fnbVariantDialog', 'fnbVariantTitle', 'fnbVariantHint', 'fnbVariantList',
             'fnbConflict', 'fnbSessionStatus', 'fnbTableActions', 'fnbTargetTable',
             'fnbCancelSession', 'fnbSend', 'fnbStationList', 'fnbPinForm', 'fnbManagerPin',
@@ -692,6 +819,16 @@
 
         function sessionStatus(message) {
             elements.fnbSessionStatus.textContent = message || '';
+        }
+
+        function serviceBlockerCount(value = controller.getState().session) {
+            const summary = value?.service_summary || {};
+            return Number(summary.NEW || 0) + Number(summary.IN_PROGRESS || 0) + Number(summary.READY || 0);
+        }
+
+        function showPendingRecovery() {
+            elements.fnbConflict.hidden = false;
+            elements.fnbConflict.innerHTML = `<p>${escapeHtml(t('fnb.state.pending_retry'))}</p><button type="button" data-action="retry-pending">${escapeHtml(t('fnb.action.retry_pending'))}</button>`;
         }
 
         function resetApprovalDialog() {
@@ -758,17 +895,28 @@
             const unsentCount = allTables.reduce(
                 (sum, table) => sum + Number(table.session?.unsent_quantity || 0), 0,
             );
+            const readyCount = allTables.reduce(
+                (sum, table) => sum + Number(table.session?.service_summary?.READY || 0), 0,
+            );
             elements.fnbFloorSummary.innerHTML = [
                 ['fnb.floor.total', allTables.length, ''],
                 ['fnb.floor.empty', emptyCount, ''],
                 ['fnb.floor.serving', servingCount, 'is-serving'],
                 ['fnb.floor.unsent', unsentCount, unsentCount ? 'is-attention' : ''],
+                ['fnb.floor.ready', readyCount, readyCount ? 'is-ready' : ''],
             ].map(([key, count, className]) => `<div class="fnb-summary-card ${className}"><span>${escapeHtml(t(key))}</span><strong>${Number(count)}</strong></div>`).join('');
             elements.fnbFloor.innerHTML = (area.tables || []).map(table => {
                 const serving = table.state === 'SERVING';
                 const opened = table.session?.opened_at ? new Date(table.session.opened_at).getTime() : Date.now();
                 const minutes = Math.max(0, Math.floor((Date.now() - opened) / 60000));
-                return `<button type="button" class="fnb-table-card${serving ? ' is-serving' : ''}" data-action="open-table" data-id="${Number(table.id)}"><strong>${escapeHtml(table.name)}</strong><span class="fnb-table-state">${escapeHtml(t(serving ? 'fnb.table.serving' : 'fnb.table.empty'))}</span>${serving ? `<span class="fnb-table-meta"><span>${escapeHtml(t('fnb.table.elapsed', { minutes }))}</span><span class="fnb-table-total">${escapeHtml(money(table.session?.subtotal_vnd || 0))}</span><span class="fnb-table-unsent">${escapeHtml(t('fnb.table.unsent', { count: Number(table.session?.unsent_quantity || 0) }))}</span></span>` : ''}</button>`;
+                const waiting = Number(table.session?.service_summary?.NEW || 0)
+                    + Number(table.session?.service_summary?.IN_PROGRESS || 0);
+                const ready = Number(table.session?.service_summary?.READY || 0);
+                const service = [
+                    waiting ? t('fnb.table.waiting', { count: waiting }) : '',
+                    ready ? t('fnb.table.ready', { count: ready }) : '',
+                ].filter(Boolean).map(label => `<span class="fnb-table-service">${escapeHtml(label)}</span>`).join('');
+                return `<button type="button" class="fnb-table-card${serving ? ' is-serving' : ''}" data-action="open-table" data-id="${Number(table.id)}"><strong>${escapeHtml(table.name)}</strong><span class="fnb-table-state">${escapeHtml(t(serving ? 'fnb.table.serving' : 'fnb.table.empty'))}</span>${serving ? `<span class="fnb-table-meta"><span>${escapeHtml(t('fnb.table.elapsed', { minutes }))}</span><span class="fnb-table-total">${escapeHtml(money(table.session?.subtotal_vnd || 0))}</span><span class="fnb-table-unsent">${escapeHtml(t('fnb.table.unsent', { count: Number(table.session?.unsent_quantity || 0) }))}</span>${service}</span>` : ''}</button>`;
             }).join('');
             elements.fnbRetry.hidden = true;
             elements.fnbRefreshNote.hidden = true;
@@ -840,12 +988,37 @@
             elements.fnbTargetTable.innerHTML = `<option value="">${escapeHtml(t('fnb.table_actions.select'))}</option>${tables.map(table => `<option value="${Number(table.id)}">${escapeHtml(table.name)} — ${escapeHtml(t(table.state === 'SERVING' ? 'fnb.table.serving' : 'fnb.table.empty'))}</option>`).join('')}`;
         }
 
+        function renderServiceTickets(value) {
+            const tickets = value.service_tickets || [];
+            const pending = controller.getState().pendingMutation;
+            const groups = [
+                ['waiting', tickets.filter(ticket => ['NEW', 'IN_PROGRESS'].includes(ticket.service_stage))],
+                ['ready', tickets.filter(ticket => ticket.service_stage === 'READY')],
+                ['served', tickets.filter(ticket => ticket.service_stage === 'SERVED')],
+            ];
+            elements.fnbServiceTickets.innerHTML = groups.map(([stage, rows]) => `
+                <section class="fnb-service-group is-${stage}">
+                    <h4>${escapeHtml(t(`fnb.service.${stage}`))} <span>${rows.length}</span></h4>
+                    ${rows.length ? rows.map(ticket => `
+                        <article class="fnb-service-ticket">
+                            <header><strong>${escapeHtml(t('fnb.service.ticket', { sequence: Number(ticket.sequence) }))}</strong><span>${escapeHtml(t(`fnb.station.${String(ticket.station).toLowerCase()}`))}</span></header>
+                            <p>${(ticket.items || []).map(item => `${Number(item.quantity)}× ${escapeHtml(item.product_name)}`).join(' · ')}</p>
+                            ${ticket.out_of_stock_reason ? `<p class="fnb-service-warning">${escapeHtml(t('fnb.service.out_of_stock', { reason: ticket.out_of_stock_reason }))}</p>` : ''}
+                            ${stage === 'ready' ? `<button type="button" data-action="serve-ticket" data-id="${Number(ticket.id)}" ${pending ? 'disabled' : ''}>${escapeHtml(t('fnb.service.mark_served'))}</button>` : ''}
+                        </article>
+                    `).join('') : `<p class="fnb-service-empty">${escapeHtml(t('fnb.service.empty'))}</p>`}
+                </section>
+            `).join('');
+        }
+
         function renderSession(value, draft) {
             if (!value) return;
             document.body.classList.add('fnb-order-open');
             elements.fnbSessionPanel.hidden = false;
             elements.fnbSessionPanel.inert = false;
             elements.fnbSessionBackdrop.hidden = true;
+            elements.fnbConflict.hidden = true;
+            elements.fnbConflict.innerHTML = '';
             elements.fnbSessionTitle.textContent = (value.tables || []).map(table => table.name).join(' + ');
             const pending = controller.getState().pendingMutation;
             const buckets = partitionLines(value.lines || []);
@@ -866,6 +1039,7 @@
             elements.fnbSentLines.innerHTML = buckets.sent.length
                 ? buckets.sent.map(line => `<article class="fnb-draft-row fnb-sent-row" data-line-id="${Number(line.id)}"><header><strong>${escapeHtml(line.product_name || `#${line.product_id}`)}</strong><span class="fnb-station-chip">${escapeHtml(t(`fnb.station.${String(line.station || 'DIRECT').toLowerCase()}`))}</span></header><p class="fnb-line-meta">${escapeHtml(t('fnb.sent.quantity', { count: Number(line.active_sent_quantity || 0) }))}${line.note ? ` · ${escapeHtml(line.note)}` : ''}</p><button type="button" class="fnb-secondary" data-action="cancel-line" data-id="${Number(line.id)}">${escapeHtml(t('fnb.action.cancel_quantity'))}</button></article>`).join('')
                 : `<p>${escapeHtml(t('fnb.sent.empty'))}</p>`;
+            renderServiceTickets(value);
             elements.fnbSubtotal.textContent = t('fnb.session.total', { amount: money(value.subtotal_vnd) });
             elements.fnbTableActions.hidden = !setupAllowed;
             elements.fnbCancelSession.disabled = Number(value.subtotal_vnd || 0) > 0;
@@ -875,6 +1049,7 @@
             elements.fnbCheckoutOpen.title = Number(value.unsent_quantity || 0) > 0 ? t('fnb.checkout.unsent_block') : '';
             elements.fnbCheckoutHint.hidden = Number(value.unsent_quantity || 0) <= 0;
             elements.fnbCheckoutHint.textContent = elements.fnbCheckoutHint.hidden ? '' : t('fnb.checkout.unsent_block_count', { count: Number(value.unsent_quantity || 0) });
+            if (controller.getState().checks) renderChecks(controller.getState().checks);
             renderTargets();
             renderProducts();
         }
@@ -949,7 +1124,14 @@
             elements.fnbPayForm.querySelectorAll('input, select, button').forEach(control => { control.disabled = !editable || !navigator.onLine; });
             updateCashControls();
             elements.fnbPrintProvisional.disabled = false;
-            elements.fnbClosePaidSession.disabled = pending || !checks.every(row => ['PAID', 'DEBT', 'CANCELLED'].includes(row.status));
+            const terminal = checks.every(row => ['PAID', 'DEBT', 'CANCELLED'].includes(row.status));
+            const serviceBlockers = serviceBlockerCount();
+            elements.fnbClosePaidSession.disabled = pending || !terminal || serviceBlockers > 0;
+            elements.fnbClosePaidSession.title = serviceBlockers
+                ? t('fnb.checkout.service_block', { count: serviceBlockers }) : '';
+            if (terminal && serviceBlockers && !pending) {
+                checkoutStatus(t('fnb.checkout.service_block', { count: serviceBlockers }));
+            }
             if (!navigator.onLine) checkoutStatus(t('fnb.checkout.offline'));
         }
 
@@ -1022,6 +1204,8 @@
                 ) : '');
             } else if (event.type === 'mutation-pending') {
                 sessionStatus(t('fnb.state.pending'));
+                elements.fnbConflict.hidden = false;
+                elements.fnbConflict.innerHTML = `<p>${escapeHtml(t('fnb.state.pending'))}</p>`;
                 if (['checks', 'close-paid'].includes(event.value.scope)) {
                     checkoutStatus(t('fnb.state.pending'));
                     if (controller.getState().checks) renderChecks(controller.getState().checks);
@@ -1029,6 +1213,8 @@
                 const mutation = event.value;
                 const affected = mutation.action === 'open-table'
                     ? document.querySelector(`[data-action="open-table"][data-id="${Number(mutation.attempt.table_id)}"]`)
+                    : mutation.attempt?.ticket_id
+                        ? elements.fnbServiceTickets.querySelector(`[data-action="serve-ticket"][data-id="${Number(mutation.attempt.ticket_id)}"]`)
                     : mutation.attempt?.line_id
                         ? elements.fnbDraftLines.querySelector(`[data-line-id="${Number(mutation.attempt.line_id)}"]`)
                         : mutation.attempt?.product_id
@@ -1036,6 +1222,10 @@
                             : null;
                 if (affected?.matches?.('button')) affected.disabled = true;
                 affected?.querySelectorAll?.('button, input, select').forEach(control => { control.disabled = true; });
+            } else if (event.type === 'mutation-recovery' || event.type === 'mutation-blocked') {
+                sessionStatus(t('fnb.state.pending_retry'));
+                showPendingRecovery();
+                if (controller.getState().checks) checkoutStatus(t('fnb.state.pending_retry'));
             } else if (event.type === 'cancel-action-required') {
                 renderSession(event.value, null);
                 sessionStatus(t('fnb.cancel.action_required'));
@@ -1046,9 +1236,15 @@
             } else if (event.type === 'mutation-error') {
                 sessionStatus(`${t('fnb.state.unsynced')}. ${event.error?.message || t('fnb.action.retry')}`);
                 renderSession(controller.getState().session, event.draft);
+                if (controller.getState().pendingMutation) showPendingRecovery();
             } else if (event.type === 'checkout-error') {
-                checkoutStatus(event.error?.message || t('fnb.checkout.error'));
+                const code = event.error?.code || event.error?.detail?.code;
+                const tickets = event.error?.detail?.tickets || [];
+                checkoutStatus(['FNB_ACTIVE_TICKETS', 'FNB_UNSERVED_TICKETS'].includes(code)
+                    ? t('fnb.checkout.service_block', { count: tickets.length })
+                    : event.error?.message || t('fnb.checkout.error'));
                 if (controller.getState().checks) renderChecks(controller.getState().checks);
+                elements.fnbCheckoutStatus.focus();
             } else if (event.type === 'conflict') {
                 renderSession(event.value, event.draft);
                 elements.fnbConflict.hidden = false;
@@ -1244,6 +1440,10 @@
                     elements.fnbApprovalDialog.showModal();
                     elements.fnbCancelResolution.focus();
                 });
+            } else if (action === 'serve-ticket') {
+                controller.serveTicket(id)
+                    .then(() => showToast(t('fnb.service.served_done')))
+                    .catch(error => sessionStatus(error.message));
             } else if (action === 'save-station') {
                 const row = button.closest('[data-product-id]');
                 controller.updateProductStation(
@@ -1252,12 +1452,9 @@
             } else if (action === 'close-approval') {
                 closeApprovalAfterConflict();
             } else if (action === 'reapply') {
-                const draft = controller.getState().recoverableDraft;
-                if (!draft) return;
-                const promise = draft.line_id
-                    ? controller.updateLine(draft.line_id, draft)
-                    : controller.addLine(draft);
-                promise.catch(() => {});
+                controller.reapplyRecoverable().catch(() => {});
+            } else if (action === 'retry-pending') {
+                controller.retryPending().catch(error => sessionStatus(error.message));
             } else if (action === 'move-table' || action === 'merge-table') {
                 const targetId = Number(elements.fnbTargetTable.value);
                 if (!targetId) return;

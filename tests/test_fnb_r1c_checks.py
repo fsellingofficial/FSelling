@@ -13,7 +13,7 @@ def op(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
 
 
-def sent_session(client, quantity: int = 3):
+def sent_session(client, quantity: int = 3, *, station: str | None = None):
     ctx = seller_with_shop(client)
     enable_fnb(client, ctx)
     area = create_fnb_area(client, ctx)
@@ -22,6 +22,20 @@ def sent_session(client, quantity: int = 3):
     floor = client.get(
         "/api/fnb/floor", params={"shop_id": ctx["shop_id"]}, headers=headers
     ).json()
+    if station is not None:
+        response = client.patch(
+            f"/api/fnb/menu-items/{ctx['product']['id']}/station",
+            json={
+                "station": station,
+                "expected_revision": floor["fnb_revision"],
+                "operation_id": op("station"),
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        floor = client.get(
+            "/api/fnb/floor", params={"shop_id": ctx["shop_id"]}, headers=headers
+        ).json()
     session = client.post(
         "/api/fnb/sessions",
         json={

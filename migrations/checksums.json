@@ -55,6 +55,11 @@
       "down_revision": "0010_fnb_kitchen_stock_r1b",
       "path": "versions/0011_fnb_checkout_r1c.py",
       "sha256": "0a5d51ab2e6c57fb40a79a177c2d99626b639937ca511670cb09c41d0ba06498"
+    },
+    "0012_fnb_ticket_service_handoff": {
+      "down_revision": "0011_fnb_checkout_r1c",
+      "path": "versions/0012_fnb_ticket_service_handoff.py",
+      "sha256": "16b7b63bf3d3dde6b565f8aa7ba15729bf6bee8343da6ac14bce860835fe5ff4"
     }
   }
 }

@@ -103,6 +103,7 @@ def test_send_is_atomic_idempotent_and_station_scoped(client, db):
     )
     assert kitchen.status_code == bar.status_code == 200
     assert [row["id"] for row in kitchen.json()["tickets"]] == [result["tickets"][0]["id"]]
+    assert kitchen.json()["tickets"][0]["session_revision"] == result["revision"]
     assert bar.json()["tickets"] == []
 
     _, kitchen_token = new_staff(client, ctx, "KITCHEN")
@@ -121,6 +122,7 @@ def test_send_is_atomic_idempotent_and_station_scoped(client, db):
     ticket_id = result["tickets"][0]["id"]
     out_payload = {
         "expected_state_version": 0,
+        "expected_session_revision": result["revision"],
         "operation_id": op("out"),
         "reason": "Hết nguyên liệu",
     }
@@ -131,7 +133,12 @@ def test_send_is_atomic_idempotent_and_station_scoped(client, db):
     )
     assert out.status_code == 200, out.text
     assert out.json()["out_of_stock_reason"] == "Hết nguyên liệu"
-    start_payload = {"expected_state_version": 1, "operation_id": op("start")}
+    assert out.json()["session_revision"] == result["revision"] + 1
+    start_payload = {
+        "expected_state_version": 1,
+        "expected_session_revision": out.json()["session_revision"],
+        "operation_id": op("start"),
+    }
     started = client.post(
         f"/api/fnb/tickets/{ticket_id}/start",
         json=start_payload,
@@ -146,18 +153,94 @@ def test_send_is_atomic_idempotent_and_station_scoped(client, db):
     ).json() == started.json()
     stale = client.post(
         f"/api/fnb/tickets/{ticket_id}/done",
-        json={"expected_state_version": 0, "operation_id": op("done")},
+        json={
+            "expected_state_version": 0,
+            "expected_session_revision": started.json()["session_revision"],
+            "operation_id": op("done-stale"),
+        },
         headers=kitchen_headers,
     )
     assert stale.status_code == 409
     assert stale.json()["detail"]["code"] == "FNB_TICKET_CHANGED"
+    blocked = client.post(
+        f"/api/fnb/tickets/{ticket_id}/done",
+        json={
+            "expected_state_version": 2,
+            "expected_session_revision": started.json()["session_revision"],
+            "operation_id": op("done-blocked"),
+        },
+        headers=kitchen_headers,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["code"] == "FNB_TICKET_OUT_OF_STOCK"
+
+    resume_payload = {
+        "expected_state_version": 2,
+        "expected_session_revision": started.json()["session_revision"],
+        "operation_id": op("resume"),
+    }
+    resumed = client.post(
+        f"/api/fnb/tickets/{ticket_id}/resume",
+        json=resume_payload,
+        headers=kitchen_headers,
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["out_of_stock_reason"] is None
+    assert client.post(
+        f"/api/fnb/tickets/{ticket_id}/resume",
+        json=resume_payload,
+        headers=kitchen_headers,
+    ).json() == resumed.json()
+
     done = client.post(
         f"/api/fnb/tickets/{ticket_id}/done",
-        json={"expected_state_version": 2, "operation_id": op("done")},
+        json={
+            "expected_state_version": resumed.json()["state_version"],
+            "expected_session_revision": resumed.json()["session_revision"],
+            "operation_id": op("done"),
+        },
         headers=kitchen_headers,
     )
     assert done.status_code == 200, done.text
     assert done.json()["status"] == "DONE"
+    assert done.json()["service_stage"] == "READY"
+    floor_ready = client.get(
+        "/api/fnb/floor", params={"shop_id": ctx["shop_id"]}, headers=headers
+    ).json()
+    floor_session = floor_ready["areas"][0]["tables"][0]["session"]
+    assert floor_session["service_stage"] == "READY"
+    assert floor_session["service_summary"]["READY"] == 1
+
+    serve_payload = {
+        "expected_state_version": done.json()["state_version"],
+        "expected_session_revision": done.json()["session_revision"],
+        "operation_id": op("serve"),
+    }
+    served = client.post(
+        f"/api/fnb/tickets/{ticket_id}/serve",
+        json=serve_payload,
+        headers=headers,
+    )
+    assert served.status_code == 200, served.text
+    assert served.json()["service_stage"] == "SERVED"
+    assert served.json()["served_at"] is not None
+    assert served.json()["served_by_user_id"] is not None
+    assert client.post(
+        f"/api/fnb/tickets/{ticket_id}/serve",
+        json=serve_payload,
+        headers=headers,
+    ).json() == served.json()
+
+    session_view = client.get(
+        f"/api/fnb/sessions/{session['id']}", headers=headers
+    ).json()
+    assert session_view["service_stage"] == "SERVED"
+    assert session_view["service_summary"] == {
+        "NEW": 0,
+        "IN_PROGRESS": 0,
+        "READY": 0,
+        "SERVED": 1,
+    }
     assert client.get(
         "/api/fnb/stations/KITCHEN/tickets",
         params={"shop_id": ctx["shop_id"]},

@@ -90,6 +90,7 @@ class FnbSessionSend(FnbRequest):
 
 class FnbTicketTransition(FnbRequest):
     expected_state_version: int = Field(ge=0, le=MAX_SAFE_QUANTITY)
+    expected_session_revision: int = Field(ge=0, le=MAX_SAFE_QUANTITY)
     operation_id: OperationId = Field(min_length=8, max_length=128)
     reason: Optional[str] = Field(default=None, max_length=500)
 

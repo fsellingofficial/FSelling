@@ -12,6 +12,7 @@ from fselling.migration.topology import StaticInventory
 ROOT = Path(__file__).resolve().parents[1]
 R1B = "0010_fnb_kitchen_stock_r1b"
 R1C = "0011_fnb_checkout_r1c"
+PLAN2 = "0012_fnb_ticket_service_handoff"
 
 
 def _runner(path):
@@ -23,7 +24,7 @@ def test_0009_to_0010_adds_r1b_schema(tmp_path):
     runner = _runner(database)
     runner.init()
     runner.upgrade("0009_fnb_table_service_r1a")
-    assert runner.upgrade("head") == [R1B, R1C]
+    assert runner.upgrade("head") == [R1B, R1C, PLAN2]
     runner.verify()
 
     with sqlite3.connect(database) as connection:

@@ -277,6 +277,28 @@ def post_ticket_out_of_stock(
     )
 
 
+@router.post("/tickets/{ticket_id}/resume")
+def post_ticket_resume(
+    ticket_id: int,
+    request: FnbTicketTransition,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return fnb_service.transition_ticket(
+        db, current_user, ticket_id, "resume", request
+    )
+
+
+@router.post("/tickets/{ticket_id}/serve")
+def post_ticket_serve(
+    ticket_id: int,
+    request: FnbTicketTransition,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return fnb_service.serve_ticket(db, current_user, ticket_id, request)
+
+
 @router.patch("/lines/{line_id}")
 def patch_line(
     line_id: int,
