@@ -140,6 +140,23 @@ async function testSessionAnnouncementsOnlyFollowMutations() {
     assert.equal(savedSession.saved, true);
 }
 
+async function testRecoveryRemainsVisibleAfterSessionReload() {
+    const deps = makeDeps({
+        request: async endpoint => endpoint.startsWith('/fnb/floor') ? floor() : session(),
+    });
+    deps.storage.set('fnb.pending:lan:1:30', JSON.stringify({
+        action: 'serve-ticket', endpoint: '/fnb/tickets/50/serve', method: 'POST',
+        body: { operation_id: 'serve-retry' }, attempt: { ticket_id: 50 },
+        scope: 'session', shopId: 1, sessionId: 30,
+    }));
+    const controller = createController(deps);
+    await controller.selectShop(1);
+    await controller.loadSession(30);
+
+    assert.equal(controller.getState().pendingMutation.action, 'serve-ticket');
+    assert.equal(deps.renders.at(-1).type, 'mutation-recovery');
+}
+
 async function testConflictKeepsDraftAndUsesAuthoritativeSnapshot() {
     const draft = { product_id: 7, quantity: 2, note: 'Ít đá' };
     const latest = { ...session(3), lines: [] };
@@ -640,7 +657,7 @@ async function mountedFnbHarness(options = {}) {
     const approvalReplies = [...(options.approvalReplies || [])];
     const payReplies = [...(options.payReplies || [])];
     const calls = [];
-    let opened = false;
+    let opened = Boolean(options.existingSession);
     let hideSession = false;
     let floorSessionRevision = 3;
     const setGlobal = (key, value) => Object.defineProperty(globalThis, key, {
@@ -648,7 +665,7 @@ async function mountedFnbHarness(options = {}) {
     });
     setGlobal('document', document);
     setGlobal('localStorage', storage(new Map([['token', 'test'], ['role', 'SELLER']])));
-    setGlobal('sessionStorage', storage(new Map()));
+    setGlobal('sessionStorage', storage(new Map(options.sessionStorageEntries || [])));
     setGlobal('navigator', { onLine: true });
     setGlobal('t', (key, values = {}) => values.amount ? `${key}:${values.amount}` : key);
     setGlobal('showToast', () => {});
@@ -766,6 +783,26 @@ function approvalState(elements) {
         resolution: elements.fnbCancelResolution.value,
         status: elements.fnbApprovalStatus.textContent,
     };
+}
+
+async function testMountedReloadShowsPendingRetry() {
+    const pending = {
+        action: 'serve-ticket', endpoint: '/fnb/tickets/50/serve', method: 'POST',
+        body: { operation_id: 'serve-retry' }, attempt: { ticket_id: 50 },
+        scope: 'session', shopId: 1, sessionId: 30,
+    };
+    const harness = await mountedFnbHarness({
+        existingSession: true,
+        sessionStorageEntries: [[
+            'fnb.pending:anonymous:1:30', JSON.stringify(pending),
+        ]],
+    });
+    try {
+        assert.equal(harness.elements.fnbConflict.hidden, false);
+        assert.match(harness.elements.fnbConflict.innerHTML, /retry-pending/);
+    } finally {
+        harness.cleanup();
+    }
 }
 
 async function withCancellation(options, action) {
@@ -1130,6 +1167,7 @@ Promise.resolve()
     .then(testLateFloorResponseIsIgnoredAfterShopChange)
     .then(testPollingAndLifecycle)
     .then(testSessionAnnouncementsOnlyFollowMutations)
+    .then(testRecoveryRemainsVisibleAfterSessionReload)
     .then(testConflictKeepsDraftAndUsesAuthoritativeSnapshot)
     .then(testConflictReapplyKeepsOriginalAction)
     .then(testSingleFlightRetryAndDefinitiveFailure)
@@ -1145,6 +1183,7 @@ Promise.resolve()
     .then(testApprovalAsyncRace)
     .then(testApprovalClosesAfterBackgroundRevisionChange)
     .then(testApprovalEndpointConflict)
+    .then(testMountedReloadShowsPendingRetry)
     .then(testCheckoutCashBehavior)
     .then(testCheckoutFailureRecovery)
     .then(() => process.stdout.write('fnb-r1a controller ok\n'));

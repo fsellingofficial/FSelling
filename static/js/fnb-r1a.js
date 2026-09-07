@@ -140,8 +140,8 @@
             const result = await deps.request(`/fnb/sessions/${Number(sessionId)}`, 'GET');
             if (!result || state.disposed || expectedShop !== state.shopId) return;
             state.session = result;
-            restorePending();
             deps.render({ type: 'session', value: result, draft: getDraft(), saved: false });
+            restorePending();
             return result;
         }
 
