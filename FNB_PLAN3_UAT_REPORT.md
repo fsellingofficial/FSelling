@@ -157,9 +157,13 @@ Environment:
 
 ### 7. Delayed/lost response
 
-- `TEST_GAP`: response loss could not be safely induced and observed through the
-  local browser controller. Automated same-operation retry coverage is not
-  claimed as browser evidence.
+- Post-review local browser harness loaded the return controller directly from
+  `static/js/pos.js`. After an unknown outcome, editing the visible form kept
+  the original draft and `uat-operation-1`; clicking retry sent that exact
+  payload and operation ID (`PASS`).
+- `TEST_GAP`: a real transport response loss against the full local backend was
+  not induced. The browser observation above verifies controller recovery, not
+  network infrastructure.
 
 ### 8. Owner activity view
 
@@ -170,6 +174,19 @@ The owner opened `Nhật ký hoạt động` and saw:
 - Order `#90`: actor `nhanvien`, approver `demo`, cash, 10,000 VND, reason and
   `1 dòng KHÔNG nhập lại kho`.
 - The `SERVICE -> CASHIER` role change was also visible.
+
+### 9. Independent-review corrections
+
+- Local browser harness: an invalid/expired approval response cleared the token,
+  returned the controller to `approval-required`, cleared PIN and reopened the
+  existing approval dialog (`PASS`).
+- Focused backend evidence: PIN and approval-token validation errors no longer
+  echo Pydantic `input`; stale approved quantity races return
+  `409 RETURN_CONTEXT_CHANGED`; wrong token/actor/shop/order/action and expiry
+  return non-enumerating invalid-approval errors without side effects.
+- Atomic rollback evidence now reaches approval consumption, cashier cash-shift
+  lookup, loyalty mutation and batch provenance CAS before an injected audit
+  failure, then compares the complete persisted state unchanged.
 
 ## Primary-checkout reconciliation warning
 
@@ -188,6 +205,7 @@ the Plan 3 worktree must not overwrite them wholesale.
 
 ## Limitations
 
-- Full suite: owner-run current `test-commit.ps1 -TestOnly` exited `0`.
+- Full suite: owner-run `test-commit.ps1 -TestOnly` exited `0` after the
+  independent-review fixes on 2026-09-09 (2,545.9 seconds).
 - Payment provider, deployment and production migration behavior: `UNKNOWN-PROD`.
 - Browser-generated operation UUIDs are not exposed by public UI/API evidence.

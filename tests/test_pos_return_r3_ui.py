@@ -73,4 +73,4 @@ def test_return_copy_is_bilingual_and_assets_share_one_version():
         assert locale.count(f"'{key}'") == 2
 
     html = _read("static/pos.html")
-    assert html.count("return-r3=20260908-r3") == 3
+    assert html.count("return-r3=20260908-r4") == 3

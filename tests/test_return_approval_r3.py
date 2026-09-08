@@ -1,6 +1,8 @@
 """Server-authoritative return policy and bound approval context."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+import hashlib
 import uuid
 
 import pytest
@@ -8,9 +10,12 @@ from fastapi import HTTPException
 
 from conftest import auth, new_staff, seller_with_shop
 from fselling import models
+from fselling.core import thoi_gian
 from fselling.core.database import SessionLocal
 from fselling.schemas.order import OrderReturnDraft
-from fselling.services import order_service, return_service
+from fselling.services import loyalty_service, order_service, return_service
+from test_i05_cost_provenance import _adjust, _return_atomic_state
+from test_tich_diem import _create_customer, _create_order, _pay_cash, _save_program
 from test_tra_hang import _ban, _dong_don, _mo_ca, _tao_sp
 
 
@@ -84,6 +89,45 @@ def test_return_schema_requires_explicit_condition_and_service_requires_reason(c
     assert missing_condition.status_code == 422
     assert missing_reason.status_code == 400
     assert missing_reason.json()["detail"]["code"] == "RETURN_REASON_REQUIRED"
+
+
+def test_return_approval_validation_never_echoes_pin(client):
+    ctx = seller_with_shop(client)
+    response = client.post(
+        "/api/orders/1/returns/approval",
+        json={
+            "items": [{"order_item_id": 1, "quantity": 1, "restock": False}],
+            "method": "cash",
+            "reason": "Hàng hỏng",
+            "operation_id": _op(),
+            "approver_username": ctx["username"],
+            "pin": "2468",
+        },
+        headers=auth(ctx["token"]),
+    )
+
+    assert response.status_code == 422
+    assert "2468" not in response.text
+    assert all("input" not in error for error in response.json()["detail"])
+
+
+def test_return_validation_never_echoes_approval_token(client):
+    ctx = seller_with_shop(client)
+    token = "sensitive-approval-token-1234567890"
+    response = client.post(
+        "/api/orders/1/returns",
+        json={
+            "method": "cash",
+            "reason": "Hàng hỏng",
+            "operation_id": _op(),
+            "approval_token": token,
+        },
+        headers=auth(ctx["token"]),
+    )
+
+    assert response.status_code == 422
+    assert token not in response.text
+    assert all("input" not in error for error in response.json()["detail"])
 
 
 @pytest.mark.parametrize(
@@ -453,6 +497,154 @@ def test_changed_draft_rejects_previously_issued_token(client):
     assert changed.json()["detail"]["code"] == "RETURN_CONTEXT_CHANGED"
 
 
+def test_competing_return_exhausting_line_reports_context_changed_and_keeps_token(client):
+    ctx = seller_with_shop(client)
+    product = _tao_sp(client, ctx, gia_ban=50_000, ton=2, gia_von=30_000)
+    order_id = _ban(client, ctx, [(product, 1)], method="cash")
+    line = _dong_don(client, ctx, order_id, product["id"])
+    cashier_username, cashier_token = new_staff(client, ctx, "CASHIER")
+    client.patch(
+        f"/api/shops/{ctx['shop_id']}/manager-pin",
+        json={"pin": "2468"},
+        headers=auth(ctx["token"]),
+    )
+    draft = _draft(line["id"], restock=False)
+    token = _approve(
+        client, ctx, cashier_token, cashier_username, order_id, draft
+    ).json()["approval_token"]
+    competing = client.post(
+        f"/api/orders/{order_id}/returns",
+        json=_draft(
+            line["id"], restock=False, method="transfer", reference="BANK-OTHER"
+        ).model_dump(),
+        headers=auth(ctx["token"]),
+    )
+    assert competing.status_code == 200, competing.text
+
+    response = client.post(
+        f"/api/orders/{order_id}/returns",
+        json={**draft.model_dump(), "approval_token": token},
+        headers=auth(cashier_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RETURN_CONTEXT_CHANGED"
+    session = SessionLocal()
+    try:
+        approval = session.query(models.FnbManagerApproval).filter_by(
+            token_hash=hashlib.sha256(token.encode()).hexdigest()
+        ).one()
+        assert approval.used_at is None
+    finally:
+        session.close()
+
+
+def test_competing_return_exhausting_line_rejects_stale_approval_preview(client):
+    ctx = seller_with_shop(client)
+    product = _tao_sp(client, ctx, gia_ban=50_000, ton=2, gia_von=30_000)
+    order_id = _ban(client, ctx, [(product, 1)], method="cash")
+    line = _dong_don(client, ctx, order_id, product["id"])
+    cashier_username, cashier_token = new_staff(client, ctx, "CASHIER")
+    client.patch(
+        f"/api/shops/{ctx['shop_id']}/manager-pin",
+        json={"pin": "2468"},
+        headers=auth(ctx["token"]),
+    )
+    draft = _draft(line["id"], restock=False)
+    fingerprint = _prepared(
+        {**ctx, "username": cashier_username}, order_id, draft
+    )["context_fingerprint"]
+    competing = client.post(
+        f"/api/orders/{order_id}/returns",
+        json=_draft(
+            line["id"], restock=False, method="transfer", reference="BANK-OTHER"
+        ).model_dump(),
+        headers=auth(ctx["token"]),
+    )
+    assert competing.status_code == 200, competing.text
+
+    response = client.post(
+        f"/api/orders/{order_id}/returns/approval",
+        json={
+            **draft.model_dump(),
+            "context_fingerprint": fingerprint,
+            "approver_username": ctx["username"],
+            "pin": "2468",
+        },
+        headers=auth(cashier_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RETURN_CONTEXT_CHANGED"
+
+
+@pytest.mark.parametrize(
+    "mismatch", ["token", "actor", "shop", "order", "action", "expired"]
+)
+def test_return_api_rejects_wrong_approval_binding_without_side_effect(client, mismatch):
+    ctx = seller_with_shop(client)
+    product = _tao_sp(client, ctx, gia_ban=50_000, ton=2, gia_von=30_000)
+    order_id = _ban(client, ctx, [(product, 1)], method="cash")
+    line = _dong_don(client, ctx, order_id, product["id"])
+    cashier_username, cashier_token = new_staff(client, ctx, "CASHIER")
+    client.patch(
+        f"/api/shops/{ctx['shop_id']}/manager-pin",
+        json={"pin": "2468"},
+        headers=auth(ctx["token"]),
+    )
+    draft = _draft(
+        line["id"], restock=False, method="transfer", reference="BANK-REF"
+    )
+    token = _approve(
+        client, ctx, cashier_token, cashier_username, order_id, draft
+    ).json()["approval_token"]
+    submitted_token = "x" * 43 if mismatch == "token" else token
+    other_shop_id = seller_with_shop(client)["shop_id"] if mismatch == "shop" else None
+    session = SessionLocal()
+    try:
+        approval = session.query(models.FnbManagerApproval).filter_by(
+            token_hash=hashlib.sha256(token.encode()).hexdigest()
+        ).one()
+        if mismatch == "actor":
+            approval.actor_user_id = approval.approver_user_id
+        elif mismatch == "shop":
+            approval.shop_id = other_shop_id
+        elif mismatch == "order":
+            approval.entity_id = order_id + 1_000_000
+        elif mismatch == "action":
+            approval.action = "CANCEL_SENT_LINE"
+        elif mismatch == "expired":
+            approval.expires_at = approval.created_at - timedelta(seconds=1)
+        session.commit()
+        before_logs = session.query(models.SystemLog).filter_by(
+            action="ORDER_RETURN"
+        ).count()
+    finally:
+        session.close()
+    before = _return_atomic_state(order_id, line["id"], product["id"])
+
+    response = client.post(
+        f"/api/orders/{order_id}/returns",
+        json={**draft.model_dump(), "approval_token": submitted_token},
+        headers=auth(cashier_token),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "RETURN_APPROVAL_INVALID"
+    assert _return_atomic_state(order_id, line["id"], product["id"]) == before
+    session = SessionLocal()
+    try:
+        approval = session.query(models.FnbManagerApproval).filter_by(
+            token_hash=hashlib.sha256(token.encode()).hexdigest()
+        ).one()
+        assert approval.used_at is None
+        assert session.query(models.SystemLog).filter_by(
+            action="ORDER_RETURN"
+        ).count() == before_logs
+    finally:
+        session.close()
+
+
 def test_failure_before_commit_rolls_back_approval_money_inventory_and_counters(
     client, monkeypatch
 ):
@@ -508,6 +700,133 @@ def test_failure_before_commit_rolls_back_approval_money_inventory_and_counters(
         headers=auth(cashier_token),
     )
     assert retry.status_code == 200, retry.text
+
+
+def test_cash_loyalty_batch_return_failure_rolls_back_with_approval(client, monkeypatch):
+    ctx = seller_with_shop(client)
+    created = client.post(
+        "/api/products",
+        params={"shop_id": ctx["shop_id"]},
+        data={
+            "name": f"Batch return {uuid.uuid4().hex}",
+            "price": 50_000,
+            "stock": 0,
+            "category_id": ctx["category_id"],
+            "track_batches": "true",
+        },
+        headers=auth(ctx["token"]),
+    )
+    assert created.status_code == 200, created.text
+    product = created.json()
+    _adjust(
+        client,
+        ctx,
+        product["id"],
+        1,
+        cost=30_000,
+        expiry=(thoi_gian.hom_nay_vn() + timedelta(days=30)).isoformat(),
+    )
+    _save_program(client, ctx)
+    customer = _create_customer(client, ctx)
+    order = _create_order(
+        client,
+        ctx,
+        customer_id=customer["id"],
+        product=product,
+        method="cash",
+        operation_id=_op(),
+    )
+    assert order.status_code == 200, order.text
+    order_id = order.json()["order_id"]
+    _pay_cash(client, ctx, order_id)
+    line = _dong_don(client, ctx, order_id, product["id"])
+    cashier_username, cashier_token = new_staff(client, ctx, "CASHIER")
+    shift_id = _mo_ca(client, ctx, token=cashier_token)
+    client.patch(
+        f"/api/shops/{ctx['shop_id']}/manager-pin",
+        json={"pin": "2468"},
+        headers=auth(ctx["token"]),
+    )
+    session = SessionLocal()
+    try:
+        session.add(
+            models.OrderPayment(
+                order_id=order_id,
+                entry_type="BANK_IN",
+                amount=1,
+                created_by_user_id=session.query(models.User).filter_by(
+                    username=ctx["username"]
+                ).one().id,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+    draft = _draft(line["id"], restock=True, method="cash")
+    token = _approve(
+        client, ctx, cashier_token, cashier_username, order_id, draft
+    ).json()["approval_token"]
+    before = _return_atomic_state(order_id, line["id"], product["id"])
+    session = SessionLocal()
+    try:
+        before_logs = session.query(models.SystemLog).filter_by(
+            action="ORDER_RETURN"
+        ).count()
+        shift = session.get(models.CashShift, shift_id)
+        before_shift = (shift.status, shift.opening_cash_amount)
+    finally:
+        session.close()
+
+    calls = {"shift": 0, "loyalty": 0, "batch": 0}
+    real_shift = order_service._current_cash_shift
+    real_loyalty = loyalty_service.add_entry
+    real_batch = return_service._conditional_advance_batch_return
+
+    def traced_shift(*args, **kwargs):
+        calls["shift"] += 1
+        return real_shift(*args, **kwargs)
+
+    def traced_loyalty(*args, **kwargs):
+        calls["loyalty"] += 1
+        return real_loyalty(*args, **kwargs)
+
+    def traced_batch(*args, **kwargs):
+        calls["batch"] += 1
+        return real_batch(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(order_service, "_current_cash_shift", traced_shift)
+        patch.setattr(loyalty_service, "add_entry", traced_loyalty)
+        patch.setattr(return_service, "_conditional_advance_batch_return", traced_batch)
+        patch.setattr(
+            order_service,
+            "_them_nhat_ky",
+            lambda *_args, **_kw: (_ for _ in ()).throw(
+                HTTPException(status_code=503, detail="injected before commit")
+            ),
+        )
+        failed = client.post(
+            f"/api/orders/{order_id}/returns",
+            json={**draft.model_dump(), "approval_token": token},
+            headers=auth(cashier_token),
+        )
+
+    assert failed.status_code == 503
+    assert calls == {"shift": 1, "loyalty": 1, "batch": 1}
+    assert _return_atomic_state(order_id, line["id"], product["id"]) == before
+    session = SessionLocal()
+    try:
+        approval = session.query(models.FnbManagerApproval).filter_by(
+            token_hash=hashlib.sha256(token.encode()).hexdigest()
+        ).one()
+        shift = session.get(models.CashShift, shift_id)
+        assert approval.used_at is None
+        assert (shift.status, shift.opening_cash_amount) == before_shift
+        assert session.query(models.SystemLog).filter_by(
+            action="ORDER_RETURN"
+        ).count() == before_logs
+    finally:
+        session.close()
 
 
 def test_ordinary_return_ignores_supplied_token_and_creates_no_approval(client):

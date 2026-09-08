@@ -4248,6 +4248,7 @@ function returnR3Begin(draft) {
 
 function returnR3Edit(draft) {
     if (!returnEnvelope) return null;
+    if (returnEnvelope.state === 'unknown') return returnEnvelope;
     returnEnvelope.draft = JSON.parse(JSON.stringify(draft));
     returnEnvelope.approvalToken = null;
     returnEnvelope.state = 'editing';
@@ -4278,6 +4279,12 @@ function returnR3Approved(token) {
     if (!returnEnvelope) return;
     returnEnvelope.approvalToken = token;
     returnEnvelope.state = 'submitting';
+}
+
+function returnR3ApprovalInvalid() {
+    if (!returnEnvelope) return;
+    returnEnvelope.approvalToken = null;
+    returnEnvelope.state = 'approval-required';
 }
 
 function returnR3Unknown() {
@@ -4549,6 +4556,11 @@ async function guiPhieuTraHangDangDo() {
         if (e.code === 'RETURN_APPROVAL_REQUIRED' && e.detail?.approval_context) {
             returnR3ApprovalRequired();
             moDuyetTraHang(e.detail.approval_context);
+        } else if (e.code === 'RETURN_APPROVAL_INVALID') {
+            returnR3ApprovalInvalid();
+            document.getElementById('returnApproverPin').value = '';
+            document.getElementById('returnApprovalStatus').innerText = e.message;
+            hienModalCa('returnApprovalModal', 'returnApproverUsername');
         } else if (e.code === 'RETURN_CONTEXT_CHANGED') {
             await xuLyNguCanhTraHangDaDoi();
         } else if (!e.status) {

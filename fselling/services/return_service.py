@@ -675,6 +675,8 @@ def _prepare_return_context(
     current_user: models.User,
     order: models.Order,
     request: OrderReturnDraft,
+    *,
+    expected_context: bool = False,
 ) -> Dict[str, Any]:
     """Read and validate the locked order; perform no durable mutation."""
     if order.status != order_service.STATUS_PAID:
@@ -719,6 +721,12 @@ def _prepare_return_context(
             )
         con_tra_duoc = int(dong.quantity or 0) - int(dong.returned_total_qty or 0)
         if item.quantity > con_tra_duoc:
+            if expected_context:
+                raise _return_error(
+                    409,
+                    "RETURN_CONTEXT_CHANGED",
+                    "Thông tin trả hàng đã thay đổi; vui lòng kiểm tra lại",
+                )
             raise HTTPException(
                 status_code=400,
                 detail=tr(
@@ -904,7 +912,9 @@ def create_return_approval(
     order_service._lock_shop_for_order(db, order.shop_id)
     db.refresh(order)
     try:
-        context = _prepare_return_context(db, current_user, order, request)
+        context = _prepare_return_context(
+            db, current_user, order, request, expected_context=True
+        )
         if context["context_fingerprint"] != request.context_fingerprint:
             raise _return_error(
                 409,
@@ -980,7 +990,13 @@ def create_return(
         db.rollback()
         return ket_qua
 
-    context = _prepare_return_context(db, current_user, order, request)
+    context = _prepare_return_context(
+        db,
+        current_user,
+        order,
+        request,
+        expected_context=bool(request.approval_token),
+    )
     dong_don = context["dong_don"]
     da_tra = context["da_tra"]
     chi_tiet = context["chi_tiet"]

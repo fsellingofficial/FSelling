@@ -109,8 +109,13 @@ async def localized_validation_error_handler(
             },
         )
     errors = jsonable_encoder(exc.errors())
+    sensitive_path = request.url.path.endswith(
+        ("/manager-pin", "/manager-approvals", "/returns", "/returns/approval")
+    )
     for error in errors:
         error["msg"] = _validation_message(error)
+        if sensitive_path:
+            error.pop("input", None)
     return JSONResponse(status_code=422, content={"detail": errors})
 
 
