@@ -30,13 +30,13 @@ Baseline: `7c17fff097f3892ca41b6d962f17ed9348dd819d`
 | Final representative regression | 11 passed; both Node harnesses passed |
 | Initial user-run full suite after Plan 2 | 2303 passed, 133 failed, 1 skipped in 2395.32s |
 | Focused rerun of all six failing files after topology fix | 216 passed |
-| Final user-run full repository suite after correction | PASS at 100%; `PYTEST_EXIT_CODE=0`; count not captured |
+| Final user-run full repository suite after correction | PASS at 100% in 2,720.5 seconds; hardened `test-commit.ps1 -TestOnly` reported `TEST PASS`; count not captured |
 
 The only combined-gate failure was an existing exact dictionary expectation that did not yet include the newly approved `service_stage` and zeroed `service_summary` fields. The expectation was updated and that exact test passed on rerun. The combined gate was not repeated because the plan forbids duplicate long test runs in the implementation loop. The observed warning was Starlette's deprecation warning; no Plan 2 assertion warning was introduced.
 
 The first user-run full suite exposed one additional migration-test maintenance gap: six legacy test files still treated revision `0011` as head, and copied old-binary fixtures removed revisions only through `0011`, leaving `0012` with a missing parent. This single topology mismatch cascaded into 133 parameterized failures. Their head expectations and fixture manifests were updated for `0012`; all 216 tests in those six files then passed in one focused process.
 
-After that correction, the project owner ran the full repository suite again. The supplied terminal evidence reached `[100%]` and immediately reported `PYTEST_EXIT_CODE=0`. The final test count was not present in the supplied output, so none is inferred here. This successful run is the final Plan 2 release-gate state; the earlier 133-failure row is retained only as discovery history.
+After that correction, the project owner ran the full repository suite again through the hardened `test-commit.ps1 -TestOnly` gate. The supplied terminal evidence reached `[100%]`, reported 2,720.5 seconds, and ended with `TEST PASS`. At this revision the script prints that result only after pytest returns exit code 0. The final test count was not present in the supplied output, so none is inferred here. This successful run is the final Plan 2 full-suite gate; the earlier 133-failure row is retained only as discovery history.
 
 Static checks also passed: Python compilation, both Node controller harnesses and `git diff --check` (line-ending notices only).
 
@@ -98,6 +98,6 @@ The automated rows above are intentionally not promoted to browser evidence. Ext
 
 ## Release boundary
 
-- Full repository suite: the owner-run gate before this correction passed at 100% with exit code 0. Because correction commits followed it, one new owner-run full-suite gate is pending.
-- Plan 2 implementation commit: `6f18d01`.
+- Full repository suite: the final owner-run gate after all correction commits reached 100% in 2,720.5 seconds and the hardened `test-commit.ps1 -TestOnly` script reported `TEST PASS`.
+- Initial Plan 2 implementation commit: `6f18d01`; correction head before this documentation-only update: `86b4f2d`.
 - Push, PR and deploy: not performed.
