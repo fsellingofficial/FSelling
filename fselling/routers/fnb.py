@@ -15,7 +15,6 @@ from ..schemas.fnb import (
     FnbLineUpdate,
     FnbMergeTable,
     FnbManagerApprovalCreate,
-    FnbManagerPinSet,
     FnbMoveTable,
     FnbSessionCancel,
     FnbSessionClose,
@@ -27,6 +26,7 @@ from ..schemas.fnb import (
     FnbTableCreate,
     FnbTableUpdate,
 )
+from ..schemas.shop import ManagerPinSet
 from ..services import fnb_service
 
 router = APIRouter(prefix="/api/fnb", tags=["fnb"])
@@ -45,7 +45,7 @@ def patch_settings(
 @router.patch("/shops/{shop_id}/manager-pin")
 def patch_manager_pin(
     shop_id: int,
-    request: FnbManagerPinSet,
+    request: ManagerPinSet,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):

@@ -5,6 +5,16 @@ const fs = require('fs');
 const vm = require('vm');
 
 async function main() {
+    const authSource = fs.readFileSync('static/js/auth.js', 'utf8');
+    assert.match(
+        authSource,
+        /data\.role === 'STAFF' && data\.staff_role === 'SERVICE'[\s\S]*navigateToPage\('\/fnb'\)/
+    );
+    assert(
+        authSource.indexOf("data.staff_role === 'SERVICE'")
+            < authSource.indexOf("data.staff_role === 'CASHIER'")
+    );
+
     const storage = new Map([
         ['token', 'token-a'],
         ['username', 'alice'],

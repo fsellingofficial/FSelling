@@ -525,11 +525,28 @@ async function testSetupMutationsAndAccess() {
         ['SELLER', null, true],
         ['STAFF', 'MANAGER', true],
         ['STAFF', 'CASHIER', false],
+        ['STAFF', 'SERVICE', false],
         ['STAFF', 'WAREHOUSE', false],
     ]) {
         const accessDeps = makeDeps({ role, staffRole });
         createController(accessDeps);
         assert.equal(accessDeps.renders[0].allowed, allowed);
+    }
+
+    for (const [staffRole, service, checkout, setup] of [
+        ['SERVICE', true, false, false],
+        ['CASHIER', true, true, false],
+        ['MANAGER', true, true, true],
+    ]) {
+        const accessDeps = makeDeps({ role: 'STAFF', staffRole });
+        createController(accessDeps);
+        const capabilities = accessDeps.renders.find(
+            event => event.type === 'role-access'
+        ).capabilities;
+        assert.deepEqual(
+            [capabilities.service, capabilities.checkout, capabilities.setup],
+            [service, checkout, setup]
+        );
     }
 }
 

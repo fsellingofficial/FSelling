@@ -192,6 +192,9 @@ class OrderReturn(Base):
     note = Column(String(500), nullable=True)
     reference = Column(String(128), nullable=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    manager_approval_id = Column(
+        Integer, ForeignKey("fnb_manager_approvals.id"), nullable=True
+    )
     shift_id = Column(Integer, ForeignKey("cash_shifts.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     # Điểm điều chỉnh của RIÊNG lần trả này. Nhiều lần trả cộng dồn theo tỷ lệ
@@ -200,6 +203,7 @@ class OrderReturn(Base):
     loyalty_points_reversed = Column(Integer, nullable=False, default=0)
 
     order = relationship("Order", back_populates="returns")
+    manager_approval = relationship("FnbManagerApproval")
     items = relationship("OrderReturnItem", back_populates="parent_return")
 
     @validates("refund_amount")

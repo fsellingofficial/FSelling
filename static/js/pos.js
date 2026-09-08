@@ -1,7 +1,9 @@
 // POS dùng chung cho chủ shop (SELLER) và nhân viên (STAFF).
+const POS_STAFF_ROLE = (localStorage.getItem('staff_role') || '').toUpperCase();
 (function () {
     const role = localStorage.getItem('role');
     if(role !== 'SELLER' && role !== 'STAFF' && role !== 'ADMIN') redirectToLogin();
+    if (role === 'STAFF' && POS_STAFF_ROLE === 'SERVICE') navigateToPage('/fnb');
 })();
 let allShops = [];
 let currentShopId = parseInt(localStorage.getItem('currentShopId'));
@@ -4227,12 +4229,75 @@ async function doiSoatTuChoi(eventId) {
 // chuyển thiếu; TRẢ HÀNG là hàng quay về và tiền đi ra, chỉ áp dụng cho đơn đã
 // thanh toán và làm được nhiều lần trên cùng một đơn.
 
+// RETURN_R3_CONTROLLER_START
+let returnEnvelope = null;
+
+function returnR3Begin(draft) {
+    if (!returnEnvelope) {
+        returnEnvelope = {
+            operationId: taoOperationId(),
+            draft: JSON.parse(JSON.stringify(draft)),
+            approvalToken: null,
+            state: 'submitting'
+        };
+    } else {
+        returnEnvelope.state = 'submitting';
+    }
+    return returnEnvelope;
+}
+
+function returnR3Edit(draft) {
+    if (!returnEnvelope) return null;
+    returnEnvelope.draft = JSON.parse(JSON.stringify(draft));
+    returnEnvelope.approvalToken = null;
+    returnEnvelope.state = 'editing';
+    return returnEnvelope;
+}
+
+function returnR3Payload() {
+    if (!returnEnvelope) return null;
+    const payload = {
+        ...returnEnvelope.draft,
+        operation_id: returnEnvelope.operationId
+    };
+    if (returnEnvelope.approvalToken) {
+        payload.approval_token = returnEnvelope.approvalToken;
+    }
+    return payload;
+}
+
+function returnR3ApprovalRequired() {
+    if (returnEnvelope) returnEnvelope.state = 'approval-required';
+}
+
+function returnR3Approving() {
+    if (returnEnvelope) returnEnvelope.state = 'approving';
+}
+
+function returnR3Approved(token) {
+    if (!returnEnvelope) return;
+    returnEnvelope.approvalToken = token;
+    returnEnvelope.state = 'submitting';
+}
+
+function returnR3Unknown() {
+    if (returnEnvelope) returnEnvelope.state = 'unknown';
+}
+
+function returnR3Succeeded() {
+    returnEnvelope = null;
+}
+
+function returnR3State() {
+    return returnEnvelope;
+}
+// RETURN_R3_CONTROLLER_END
+
 let donDangTra = null;          // chi tiết đơn đang mở trong modal trả hàng
-let maThaoTacTraHang = null;    // một mã cho đúng một lần bấm, retry dùng lại
 
 function moModalTraHang() {
     donDangTra = null;
-    maThaoTacTraHang = null;
+    returnR3Succeeded();
     document.getElementById('returnOrderId').value = '';
     document.getElementById('returnMsg').innerText = '';
     document.getElementById('returnBody').style.display = 'none';
@@ -4242,7 +4307,7 @@ function moModalTraHang() {
 
 function dongModalTraHang() {
     donDangTra = null;
-    maThaoTacTraHang = null;
+    returnR3Succeeded();
     dongModalCa('returnModal');
 }
 
@@ -4277,9 +4342,6 @@ async function timDonDeTra() {
             return;
         }
         donDangTra = d;
-        // Mã thao tác gắn với LẦN MỞ phiếu này. Bấm xác nhận hai lần vì mạng
-        // chậm sẽ dùng lại đúng mã đó nên server chỉ ghi một phiếu.
-        maThaoTacTraHang = taoOperationId();
         veFormTraHang(d);
         than.style.display = 'block';
     } catch (e) {
@@ -4311,14 +4373,15 @@ function veFormTraHang(d) {
                     <span style="font-size:0.8rem; color:#94A3B8;">${escapeHtml(dich('pos.return.quantity'))}</span>
                     <input type="number" min="0" max="${conLai}" value="0"
                            data-return-item="${i.id}" data-unit-price="${i.price || 0}"
-                           oninput="capNhatFormTraHang()"
+                           oninput="returnR3DraftEdited(); capNhatFormTraHang()"
                            style="width:5rem; padding:0.3rem; background:#0F172A; border:1px solid #334155; color:white; border-radius:4px; margin:0;">
                 </label>
                 <span style="font-size:0.8rem; color:#94A3B8;">${escapeHtml(dich('pos.return.remaining', { count: conLai }))}</span>
-                <label style="display:flex; align-items:center; gap:0.35rem; margin:0; font-size:0.8rem;">
-                    <input type="checkbox" data-return-restock="${i.id}" checked style="margin:0;">
-                    <span>${escapeHtml(dich('pos.return.restock'))}</span>
-                </label>
+                <fieldset class="return-condition" data-order-item-id="${i.id}">
+                    <legend>${escapeHtml(dich('pos.return.condition'))}</legend>
+                    <label><input type="radio" name="return-condition-${i.id}" value="restock" onchange="returnR3DraftEdited(); capNhatFormTraHang()">${escapeHtml(dich('pos.return.condition_restock'))}</label>
+                    <label><input type="radio" name="return-condition-${i.id}" value="discard" onchange="returnR3DraftEdited(); capNhatFormTraHang()">${escapeHtml(dich('pos.return.condition_discard'))}</label>
+                </fieldset>
             </div>
         </div>`;
     });
@@ -4340,15 +4403,36 @@ function veFormTraHang(d) {
 /** Các dòng đang được chọn trả, kèm số lượng và quyết định nhập lại kho. */
 function docDongTraHang() {
     return [...document.querySelectorAll('[data-return-item]')]
-        .map(el => ({
-            order_item_id: Number(el.dataset.returnItem),
-            quantity: parseInt(el.value, 10) || 0,
-            unit_price: Number(el.dataset.unitPrice) || 0,
-            restock: document.querySelector(
-                `[data-return-restock="${el.dataset.returnItem}"]`
-            )?.checked !== false
-        }))
+        .map(el => {
+            const condition = document.querySelector(
+                `[name="return-condition-${el.dataset.returnItem}"]:checked`
+            )?.value;
+            return {
+                order_item_id: Number(el.dataset.returnItem),
+                quantity: parseInt(el.value, 10) || 0,
+                unit_price: Number(el.dataset.unitPrice) || 0,
+                restock: condition === 'restock'
+                    ? true
+                    : (condition === 'discard' ? false : null)
+            };
+        })
         .filter(d => d.quantity > 0);
+}
+
+function taoBanNhapTraHang() {
+    const method = document.getElementById('returnMethod').value;
+    return {
+        items: docDongTraHang().map(({ unit_price, ...item }) => item),
+        method,
+        reason: document.getElementById('returnReason').value.trim(),
+        reference: method === 'transfer'
+            ? document.getElementById('returnReference').value.trim()
+            : null
+    };
+}
+
+function returnR3DraftEdited() {
+    if (returnR3State()) returnR3Edit(taoBanNhapTraHang());
 }
 
 function capNhatFormTraHang() {
@@ -4359,6 +4443,16 @@ function capNhatFormTraHang() {
         chuyenKhoan ? 'none' : 'block';
 
     const dong = docDongTraHang();
+    const reasonMissing = !document.getElementById('returnReason').value.trim();
+    const referenceMissing = chuyenKhoan
+        && !document.getElementById('returnReference').value.trim();
+    const conditionMissing = dong.some(item => item.restock === null);
+    document.getElementById('returnReasonError').innerText = reasonMissing
+        ? dich('pos.return.reason_required') : '';
+    document.getElementById('returnReferenceError').innerText = referenceMissing
+        ? dich('pos.return.reference_required') : '';
+    document.getElementById('returnConditionError').innerText = conditionMissing
+        ? dich('pos.return.condition_required') : '';
     const tienHang = dong.reduce((t, d) => t + d.unit_price * d.quantity, 0);
     // Ước tính hiển thị cho thu ngân. Con số CHỐT vẫn do server tính lại -
     // đây chỉ là để khách nhìn thấy trước khi bấm.
@@ -4367,15 +4461,40 @@ function capNhatFormTraHang() {
     const tyLe = tongHang > 0 ? tongDon / tongHang : 1;
     document.getElementById('returnTotal').innerText =
         dinhDangTien(Math.round(tienHang * tyLe));
-    document.getElementById('btnSubmitReturn').disabled = dong.length === 0;
+    const restockQuantity = dong
+        .filter(item => item.restock === true)
+        .reduce((total, item) => total + item.quantity, 0);
+    document.getElementById('returnClientSummary').innerText = dich(
+        'pos.return.client_summary',
+        {
+            method: dich(chuyenKhoan
+                ? 'pos.return.method_transfer'
+                : 'pos.return.method_cash'),
+            cash: dich(chuyenKhoan
+                ? 'pos.return.no_cash_effect'
+                : 'pos.return.cash_shift_effect'),
+            restock: restockQuantity
+        }
+    );
+    document.getElementById('btnSubmitReturn').disabled =
+        dong.length === 0 || conditionMissing || reasonMissing || referenceMissing;
 }
 
 async function ghiNhanTraHang() {
     if (!donDangTra) return;
     const dong = docDongTraHang();
     if (!dong.length) return showToast(dich('pos.return.choose_line'));
+    if (dong.some(item => item.restock === null)) {
+        return showToast(dich('pos.return.condition_required'));
+    }
 
     const method = document.getElementById('returnMethod').value;
+    if (!document.getElementById('returnReason').value.trim()) {
+        return showToast(dich('pos.return.reason_required'));
+    }
+    if (method === 'transfer' && !document.getElementById('returnReference').value.trim()) {
+        return showToast(dich('pos.return.reference_required'));
+    }
     const soMon = dong.reduce((t, d) => t + d.quantity, 0);
     // Dùng xacNhan() chứ KHÔNG dùng confirm(): Chrome cho người dùng tick chặn
     // hộp thoại của trang, từ đó confirm() trả false lặng lẽ và nút chết câm.
@@ -4392,46 +4511,155 @@ async function ghiNhanTraHang() {
     );
     if (!dongY) return;
 
+    returnR3Begin(taoBanNhapTraHang());
+    await guiPhieuTraHangDangDo();
+}
+
+async function guiPhieuTraHangDangDo() {
+    const envelope = returnR3State();
+    if (!donDangTra || !envelope) return;
     datNutDangXuLy('btnSubmitReturn', true);
+    document.getElementById('returnFormStatus').innerText = '';
+    document.getElementById('btnRetryReturn').hidden = true;
     try {
-        const res = await apiCall(`/orders/${donDangTra.id}/returns`, 'POST', {
-            items: dong.map(d => ({
-                order_item_id: d.order_item_id,
-                quantity: d.quantity,
-                restock: d.restock
-            })),
-            method,
-            reason: document.getElementById('returnReason').value.trim() || null,
-            reference: method === 'transfer'
-                ? (document.getElementById('returnReference').value.trim() || null)
-                : null,
-            operation_id: maThaoTacTraHang
-        });
+        const res = await apiCall(
+            `/orders/${donDangTra.id}/returns`,
+            'POST',
+            returnR3Payload()
+        );
         const diemHoanLai = Math.max(0, Math.trunc(Number(
             res.return?.loyalty_points_restored || 0
         )));
         const diemTruLai = Math.max(0, Math.trunc(Number(
             res.return?.loyalty_points_reversed || 0
         )));
-        showToast(dich(
-            diemHoanLai > 0 || diemTruLai > 0
-                ? 'pos.return.done_with_points'
-                : 'pos.return.done',
-            {
-                amount: dinhDangTien(res.return?.refund_amount || 0),
-                restored: dinhDangSoPOS(diemHoanLai),
-                reversed: dinhDangSoPOS(diemTruLai)
-            }
-        ));
+        showToast(dich('pos.return.done_durable', {
+            id: res.return?.id,
+            amount: dinhDangTien(res.return?.refund_amount || 0),
+            restocked: (res.return?.items || []).filter(item => item.restocked).length,
+            restored: dinhDangSoPOS(diemHoanLai),
+            reversed: dinhDangSoPOS(diemTruLai)
+        }));
+        returnR3Succeeded();
         dongModalTraHang();
         loadProducts();          // tồn kho vừa đổi vì hàng nhập lại
         loadCurrentShift(false); // hoàn tiền mặt vừa trừ vào két của ca
         if (selectedCustomerId !== null) capNhatNutThuNo();
     } catch (e) {
-        showToast(e.message);
+        if (e.code === 'RETURN_APPROVAL_REQUIRED' && e.detail?.approval_context) {
+            returnR3ApprovalRequired();
+            moDuyetTraHang(e.detail.approval_context);
+        } else if (e.code === 'RETURN_CONTEXT_CHANGED') {
+            await xuLyNguCanhTraHangDaDoi();
+        } else if (!e.status) {
+            returnR3Unknown();
+            document.getElementById('returnFormStatus').innerText =
+                dich('pos.return.unknown_result');
+            document.getElementById('btnRetryReturn').hidden = false;
+        } else {
+            showToast(e.message);
+        }
     } finally {
         datNutDangXuLy('btnSubmitReturn', false);
     }
+}
+
+function moDuyetTraHang(context) {
+    const modal = document.getElementById('returnApprovalModal');
+    modal.dataset.contextFingerprint = context.context_fingerprint;
+    document.getElementById('returnApprovalOrder').innerText = `#${context.order_id}`;
+    document.getElementById('returnApprovalActor').innerText =
+        localStorage.getItem('username') || '—';
+    document.getElementById('returnApprovalAmount').innerText =
+        dinhDangTien(context.refund_amount_vnd || 0);
+    document.getElementById('returnApprovalMethod').innerText = dich(
+        context.refund_method === 'cash'
+            ? 'pos.return.method_cash'
+            : 'pos.return.method_transfer'
+    );
+    document.getElementById('returnApprovalNonRestock').innerText =
+        String(context.non_restock_item_count || 0);
+    document.getElementById('returnApprovalReason').innerText =
+        returnR3State()?.draft?.reason || '—';
+    document.getElementById('returnApprovalCodes').innerText =
+        (context.reason_codes || []).join(', ');
+    document.getElementById('returnTotal').innerText =
+        dinhDangTien(context.refund_amount_vnd || 0);
+    document.getElementById('returnClientSummary').innerText = dich(
+        'pos.return.server_summary',
+        {
+            method: dich(context.refund_method === 'cash'
+                ? 'pos.return.method_cash'
+                : 'pos.return.method_transfer'),
+            nonRestock: context.non_restock_item_count || 0,
+            codes: (context.reason_codes || []).join(', ')
+        }
+    );
+    document.getElementById('returnApprovalStatus').innerText =
+        dich('pos.return.approval_required');
+    document.getElementById('returnApproverPin').value = '';
+    hienModalCa('returnApprovalModal', 'returnApproverUsername');
+}
+
+function dongModalDuyetTraHang() {
+    document.getElementById('returnApproverPin').value = '';
+    dongModalCa('returnApprovalModal');
+}
+
+async function guiYeuCauDuyetTraHang() {
+    const envelope = returnR3State();
+    if (!envelope || !donDangTra) return;
+    const username = document.getElementById('returnApproverUsername').value.trim();
+    const pinField = document.getElementById('returnApproverPin');
+    const pin = pinField.value;
+    if (!username || !/^\d{4,6}$/.test(pin)) {
+        document.getElementById('returnApprovalStatus').innerText =
+            dich('pos.return.approval_credentials_required');
+        return;
+    }
+    const approvalPayload = returnR3Payload();
+    delete approvalPayload.approval_token;
+    returnR3Approving();
+    try {
+        const response = await apiCall(
+            `/orders/${donDangTra.id}/returns/approval`,
+            'POST',
+            {
+                ...approvalPayload,
+                context_fingerprint: document.getElementById('returnApprovalModal')
+                    .dataset.contextFingerprint,
+                approver_username: username,
+                pin
+            }
+        );
+        pinField.value = '';
+        returnR3Approved(response.approval_token);
+        dongModalCa('returnApprovalModal');
+        await guiPhieuTraHangDangDo();
+    } catch (e) {
+        pinField.value = '';
+        if (e.code === 'RETURN_CONTEXT_CHANGED') {
+            await xuLyNguCanhTraHangDaDoi();
+            return;
+        }
+        returnR3ApprovalRequired();
+        document.getElementById('returnApprovalStatus').innerText = e.message;
+        pinField.focus();
+    }
+}
+
+async function xuLyNguCanhTraHangDaDoi() {
+    dongModalCa('returnApprovalModal');
+    returnR3Succeeded();
+    showToast(dich('pos.return.context_changed'));
+    await timDonDeTra();
+}
+
+async function thuLaiPhieuTraHang() {
+    const envelope = returnR3State();
+    if (!envelope || envelope.state !== 'unknown') return;
+    returnR3Begin(envelope.draft);
+    await guiPhieuTraHangDangDo();
 }
 
 // ===== C2d: gắn khách hàng vào đơn ở POS =====

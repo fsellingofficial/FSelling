@@ -229,8 +229,12 @@ def _order_item_id(client, ctx, order_id, token=None):
 def _return_order(client, ctx, order_id, quantity, *, operation_id=None):
     item_id = _order_item_id(client, ctx, order_id)
     body = {
-        "items": [{"order_item_id": item_id, "quantity": quantity}],
+        "items": [
+            {"order_item_id": item_id, "quantity": quantity, "restock": True}
+        ],
         "method": "transfer",
+        "reason": "Khách trả hàng",
+        "reference": "TEST-RETURN",
         "operation_id": operation_id or uuid.uuid4().hex,
     }
     return client.post(

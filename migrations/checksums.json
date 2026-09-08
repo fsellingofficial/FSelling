@@ -60,6 +60,11 @@
       "down_revision": "0011_fnb_checkout_r1c",
       "path": "versions/0012_fnb_ticket_service_handoff.py",
       "sha256": "26329791332a0934e76c36aaaadf2c67fb42fd4272f380c8c35e7efc9e6831ed"
+    },
+    "0013_roles_returns_approval_r3": {
+      "down_revision": "0012_fnb_ticket_service_handoff",
+      "path": "versions/0013_roles_returns_approval_r3.py",
+      "sha256": "ecaf4b7add5b4cee7f37a24c52aa88ede0568b83406177f2d7cc8571da55c3a3"
     }
   }
 }

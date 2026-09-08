@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -29,12 +30,16 @@ from ..core.i18n import tr
 from ..core.money import checked_add, cumulative_basis
 from ..core.numeric_limits import MAX_SAFE_QUANTITY
 from ..dependencies import (
-    PERMISSION_SALE,
+    PERMISSION_ORDER_RETURN,
     require_shop_access,
     require_staff_permission,
 )
-from ..schemas.order import OrderReturnCreate
-from . import inventory_service, loyalty_service, order_service
+from ..schemas.order import (
+    OrderReturnApprovalCreate,
+    OrderReturnCreate,
+    OrderReturnDraft,
+)
+from . import approval_service, inventory_service, loyalty_service, order_service
 
 ENTRY_RETURN_CASH = "RETURN_CASH"
 ENTRY_RETURN_TRANSFER = "RETURN_TRANSFER"
@@ -54,7 +59,7 @@ def _khoa_thao_tac(operation_id: str) -> str:
     return "return:" + hashlib.sha256(ma.encode("utf-8")).hexdigest()
 
 
-def _return_operation_fingerprint(request: OrderReturnCreate) -> str:
+def _return_operation_fingerprint(request: OrderReturnDraft) -> str:
     """Dấu vân tay của đúng yêu cầu mà một operation_id đại diện."""
     payload = {
         "items": sorted(
@@ -123,6 +128,12 @@ def _serialize_return(ban_ghi: models.OrderReturn) -> Dict[str, Any]:
         "loyalty_points_reversed": int(ban_ghi.loyalty_points_reversed or 0),
         "created_by_user_id": ban_ghi.created_by_user_id,
         "shift_id": ban_ghi.shift_id,
+        "manager_approval_id": ban_ghi.manager_approval_id,
+        "approved_by_user_id": (
+            ban_ghi.manager_approval.approver_user_id
+            if ban_ghi.manager_approval is not None
+            else None
+        ),
         "created_at": ban_ghi.created_at,
         "items": [
             {
@@ -346,7 +357,18 @@ def bo_sung_thong_tin_tra_hang(
     return chi_tiet
 
 
-def _kiem_yeu_cau(request: OrderReturnCreate) -> None:
+def _return_error(status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": tr(message)},
+    )
+
+
+def _kiem_yeu_cau(request: OrderReturnDraft) -> None:
+    if not (request.reason or "").strip():
+        raise _return_error(
+            400, "RETURN_REASON_REQUIRED", "Phải nhập lý do trả hàng"
+        )
     if not request.items:
         raise HTTPException(
             status_code=400,
@@ -613,6 +635,313 @@ def _phieu_da_ghi(
     return truoc
 
 
+def _classify_return_source(db: Session, order: models.Order) -> str:
+    if order.payment_method == order_service.PAYMENT_METHOD_DEBT:
+        return "debt"
+
+    sources = set()
+    if order.payment_method == order_service.PAYMENT_METHOD_CASH:
+        sources.add("cash")
+    elif order.payment_method == order_service.PAYMENT_METHOD_TRANSFER:
+        sources.add("transfer")
+    else:
+        sources.add("unknown")
+
+    cash_entries = {order_service.ENTRY_CASH, order_service.ENTRY_DEBT_CASH}
+    transfer_entries = {order_service.ENTRY_BANK, order_service.ENTRY_DEBT_TRANSFER}
+    for entry_type, in db.query(models.OrderPayment.entry_type).filter(
+        models.OrderPayment.order_id == order.id,
+        models.OrderPayment.amount > 0,
+    ):
+        entry_type = str(entry_type or "").upper()
+        if entry_type.startswith(("REFUND_", "RETURN_")):
+            continue
+        if entry_type in cash_entries:
+            sources.add("cash")
+        elif entry_type in transfer_entries:
+            sources.add("transfer")
+        else:
+            sources.add("unknown")
+
+    if sources == {"cash"}:
+        return "cash-only"
+    if sources == {"transfer"}:
+        return "transfer-only"
+    return "ambiguous"
+
+
+def _prepare_return_context(
+    db: Session,
+    current_user: models.User,
+    order: models.Order,
+    request: OrderReturnDraft,
+) -> Dict[str, Any]:
+    """Read and validate the locked order; perform no durable mutation."""
+    if order.status != order_service.STATUS_PAID:
+        raise HTTPException(
+            status_code=409,
+            detail=tr(
+                "Chỉ nhận trả hàng cho đơn đã thanh toán. Đơn chưa thanh toán "
+                "thì hủy đơn, đơn đang đối soát thì xử lý đối soát trước."
+            ),
+        )
+
+    dong_don = {
+        it.id: it
+        for it in db.query(models.OrderItem)
+        .filter(models.OrderItem.order_id == order.id)
+        .all()
+    }
+    deficit_order_item_ids = {
+        int(order_item_id)
+        for (order_item_id,) in db.query(
+            models.OfflineBatchStockDeficit.order_item_id
+        )
+        .filter(
+            models.OfflineBatchStockDeficit.order_item_id.in_(dong_don.keys())
+        )
+        .all()
+    }
+    da_tra = da_tra_theo_dong(db, order.id)
+
+    chi_tiet: List[Dict[str, Any]] = []
+    for item in request.items:
+        dong = dong_don.get(item.order_item_id)
+        if dong is None:
+            raise HTTPException(status_code=400, detail=tr("Dòng hàng không thuộc đơn này"))
+        if int(dong.id) in deficit_order_item_ids:
+            raise HTTPException(
+                status_code=409,
+                detail=tr(
+                    "Dòng theo lô có phần xuất không xác định nguồn; "
+                    "không thể trả hàng an toàn"
+                ),
+            )
+        con_tra_duoc = int(dong.quantity or 0) - int(dong.returned_total_qty or 0)
+        if item.quantity > con_tra_duoc:
+            raise HTTPException(
+                status_code=400,
+                detail=tr(
+                    "'{name}' chỉ còn {remaining} có thể trả (đã bán "
+                    "{sold}, đã trả {returned})",
+                    name=dong.product_name,
+                    remaining=con_tra_duoc,
+                    sold=int(dong.quantity or 0),
+                    returned=int(dong.returned_total_qty or 0),
+                ),
+            )
+        line_delta = _line_return_delta(dong, int(item.quantity))
+        batch_deltas = _batch_return_deltas(db, dong, line_delta)
+        product = None
+        verified_product_id = None
+        batches: Dict[int, models.ProductBatch] = {}
+        if item.restock:
+            if dong.product_id is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=tr("Dòng đơn thiếu product_id; không thể nhập lại kho an toàn"),
+                )
+            product = (
+                db.query(models.Product)
+                .filter(
+                    models.Product.id == dong.product_id,
+                    models.Product.shop_id == order.shop_id,
+                )
+                .first()
+            )
+            if product is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=tr("Sản phẩm nguồn không thuộc cửa hàng; không thể nhập lại kho"),
+                )
+            verified_product_id = int(product.id)
+            if batch_deltas:
+                batch_ids = [int(row["source"].batch_id) for row in batch_deltas]
+                batches = {
+                    int(batch.id): batch
+                    for batch in db.query(models.ProductBatch)
+                    .filter(
+                        models.ProductBatch.id.in_(batch_ids),
+                        models.ProductBatch.product_id == product.id,
+                    )
+                    .all()
+                }
+                if len(batches) != len(set(batch_ids)):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=tr("Lô nguồn không thuộc sản phẩm của cửa hàng"),
+                    )
+            elif product.track_batches:
+                raise HTTPException(
+                    status_code=409,
+                    detail=tr("Dòng theo lô thiếu provenance nguồn"),
+                )
+        chi_tiet.append(
+            {
+                "dong": dong,
+                "product": product,
+                "verified_product_id": verified_product_id,
+                "quantity": int(item.quantity),
+                "restock": bool(item.restock),
+                "tien_hang": int(dong.price or 0) * int(item.quantity),
+                "tien_hoan": line_delta["refund"],
+                "line_delta": line_delta,
+                "batch_deltas": batch_deltas,
+                "batches": batches,
+            }
+        )
+
+    tien_hoan = 0
+    for detail in chi_tiet:
+        tien_hoan = checked_add(tien_hoan, int(detail["tien_hoan"]))
+    if tien_hoan > MONEY_EPSILON and request.method is None:
+        raise HTTPException(status_code=400, detail=tr("Phải chọn cách hoàn tiền cho khách"))
+    if (
+        tien_hoan > MONEY_EPSILON
+        and request.method == order_service.PAYMENT_METHOD_TRANSFER
+        and not (request.reference or "").strip()
+    ):
+        raise _return_error(
+            400,
+            "RETURN_REFERENCE_REQUIRED",
+            "Phải nhập tham chiếu khi hoàn tiền chuyển khoản",
+        )
+
+    source_class = _classify_return_source(db, order)
+    reason_codes = set()
+    if source_class == "debt":
+        reason_codes.add("DEBT_SOURCE")
+    elif source_class == "ambiguous":
+        reason_codes.add("AMBIGUOUS_SOURCE")
+    expected_method = {
+        "cash-only": order_service.PAYMENT_METHOD_CASH,
+        "transfer-only": order_service.PAYMENT_METHOD_TRANSFER,
+    }.get(source_class)
+    if expected_method and tien_hoan > MONEY_EPSILON and request.method != expected_method:
+        reason_codes.add("METHOD_CHANGE")
+    if any(not detail["restock"] for detail in chi_tiet):
+        reason_codes.add("NON_RESTOCK")
+
+    normalized_items = []
+    for detail in sorted(chi_tiet, key=lambda row: int(row["dong"].id)):
+        dong = detail["dong"]
+        normalized_items.append(
+            {
+                "order_item_id": int(dong.id),
+                "quantity": int(detail["quantity"]),
+                "restock": bool(detail["restock"]),
+                "returned_total_qty": int(dong.returned_total_qty or 0),
+                "returned_known_qty": int(dong.returned_known_qty or 0),
+                "returned_unknown_qty": int(dong.returned_unknown_qty or 0),
+                "returned_cost_basis_vnd": int(dong.returned_cost_basis_vnd or 0),
+                "returned_refund_vnd": int(dong.returned_refund_vnd or 0),
+                "cost_return_version": int(dong.cost_return_version or 0),
+            }
+        )
+    canonical = json.dumps(
+        {
+            "actor_user_id": int(current_user.id),
+            "shop_id": int(order.shop_id),
+            "order_id": int(order.id),
+            "operation_id": request.operation_id.strip(),
+            "items": normalized_items,
+            "method": request.method,
+            "reason": (request.reason or "").strip(),
+            "reference": (request.reference or "").strip() or None,
+            "source_class": source_class,
+            "order_status": order.status,
+            "refund_amount_vnd": tien_hoan,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return {
+        "dong_don": dong_don,
+        "da_tra": da_tra,
+        "chi_tiet": chi_tiet,
+        "tien_hoan": tien_hoan,
+        "source_class": source_class,
+        "reason_codes": tuple(sorted(reason_codes)),
+        "non_restock_item_count": sum(not detail["restock"] for detail in chi_tiet),
+        "context_fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
+
+
+def _safe_approval_context(
+    order: models.Order,
+    request: OrderReturnDraft,
+    context: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "order_id": order.id,
+        "refund_amount_vnd": context["tien_hoan"],
+        "refund_method": request.method if context["tien_hoan"] > 0 else None,
+        "non_restock_item_count": context["non_restock_item_count"],
+        "reason_codes": list(context["reason_codes"]),
+        "context_fingerprint": context["context_fingerprint"],
+    }
+
+
+def create_return_approval(
+    db: Session,
+    current_user: models.User,
+    order_id: int,
+    request: OrderReturnApprovalCreate,
+) -> Dict[str, Any]:
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail=tr("Không tìm thấy đơn hàng"))
+    try:
+        shop = require_shop_access(db, order.shop_id, current_user)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise HTTPException(status_code=404, detail=tr("Không tìm thấy đơn hàng"))
+        raise
+    require_staff_permission(current_user, PERMISSION_ORDER_RETURN)
+    _kiem_yeu_cau(request)
+
+    order_service._lock_shop_for_order(db, order.shop_id)
+    db.refresh(order)
+    try:
+        context = _prepare_return_context(db, current_user, order, request)
+        if context["context_fingerprint"] != request.context_fingerprint:
+            raise _return_error(
+                409,
+                "RETURN_CONTEXT_CHANGED",
+                "Thông tin trả hàng đã thay đổi; vui lòng kiểm tra lại",
+            )
+        if not context["reason_codes"]:
+            raise _return_error(
+                400,
+                "RETURN_APPROVAL_NOT_REQUIRED",
+                "Yêu cầu này không cần quản lý phê duyệt",
+            )
+        token, _approval = approval_service.issue_pin_approval(
+            db,
+            shop=shop,
+            actor=current_user,
+            approver_username=request.approver_username,
+            pin=request.pin,
+            action="ORDER_RETURN_EXCEPTION",
+            entity_type="ORDER",
+            entity_id=order.id,
+            revision=0,
+            context_fingerprint=context["context_fingerprint"],
+        )
+        db.commit()
+    except Exception:
+        if db.in_transaction():
+            db.rollback()
+        raise
+
+    return {
+        "approval_token": token,
+        "expires_in_seconds": 300,
+        "approval_context": _safe_approval_context(order, request, context),
+    }
+
+
 def create_return(
     db: Session,
     current_user: models.User,
@@ -623,8 +952,8 @@ def create_return(
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail=tr("Không tìm thấy đơn hàng"))
-    require_shop_access(db, order.shop_id, current_user)
-    require_staff_permission(current_user, PERMISSION_SALE)
+    shop = require_shop_access(db, order.shop_id, current_user)
+    require_staff_permission(current_user, PERMISSION_ORDER_RETURN)
 
     _kiem_yeu_cau(request)
     operation_key = _khoa_thao_tac(request.operation_id)
@@ -651,139 +980,11 @@ def create_return(
         db.rollback()
         return ket_qua
 
-    if order.status != order_service.STATUS_PAID:
-        db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=tr(
-                "Chỉ nhận trả hàng cho đơn đã thanh toán. Đơn chưa thanh toán "
-                "thì hủy đơn, đơn đang đối soát thì xử lý đối soát trước."
-            ),
-        )
-
-    dong_don = {
-        it.id: it
-        for it in db.query(models.OrderItem)
-        .filter(models.OrderItem.order_id == order_id)
-        .all()
-    }
-    deficit_order_item_ids = {
-        int(order_item_id)
-        for (order_item_id,) in db.query(
-            models.OfflineBatchStockDeficit.order_item_id
-        )
-        .filter(
-            models.OfflineBatchStockDeficit.order_item_id.in_(dong_don.keys())
-        )
-        .all()
-    }
-    da_tra = da_tra_theo_dong(db, order_id)
-
-    chi_tiet: List[Dict[str, Any]] = []
-    for it in request.items:
-        dong = dong_don.get(it.order_item_id)
-        if dong is None:
-            db.rollback()
-            raise HTTPException(
-                status_code=400,
-                detail=tr("Dòng hàng không thuộc đơn này"),
-            )
-        if int(dong.id) in deficit_order_item_ids:
-            db.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail=tr(
-                    "Dòng theo lô có phần xuất không xác định nguồn; "
-                    "không thể trả hàng an toàn"
-                ),
-            )
-        con_tra_duoc = int(dong.quantity or 0) - int(dong.returned_total_qty or 0)
-        if it.quantity > con_tra_duoc:
-            db.rollback()
-            raise HTTPException(
-                status_code=400,
-                detail=tr(
-                    "'{name}' chỉ còn {remaining} có thể trả (đã bán "
-                    "{sold}, đã trả {returned})",
-                    name=dong.product_name,
-                    remaining=con_tra_duoc,
-                    sold=int(dong.quantity or 0),
-                    returned=int(dong.returned_total_qty or 0),
-                ),
-            )
-        line_delta = _line_return_delta(dong, int(it.quantity))
-        batch_deltas = _batch_return_deltas(db, dong, line_delta)
-        product = None
-        verified_product_id = None
-        batches: Dict[int, models.ProductBatch] = {}
-        if it.restock:
-            if dong.product_id is None:
-                db.rollback()
-                raise HTTPException(
-                    status_code=409,
-                    detail=tr("Dòng đơn thiếu product_id; không thể nhập lại kho an toàn"),
-                )
-            product = (
-                db.query(models.Product)
-                .filter(
-                    models.Product.id == dong.product_id,
-                    models.Product.shop_id == order.shop_id,
-                )
-                .first()
-            )
-            if product is None:
-                db.rollback()
-                raise HTTPException(
-                    status_code=409,
-                    detail=tr("Sản phẩm nguồn không thuộc cửa hàng; không thể nhập lại kho"),
-                )
-            verified_product_id = int(product.id)
-            if batch_deltas:
-                batch_ids = [int(row["source"].batch_id) for row in batch_deltas]
-                batches = {
-                    int(batch.id): batch
-                    for batch in db.query(models.ProductBatch)
-                    .filter(
-                        models.ProductBatch.id.in_(batch_ids),
-                        models.ProductBatch.product_id == product.id,
-                    )
-                    .all()
-                }
-                if len(batches) != len(set(batch_ids)):
-                    db.rollback()
-                    raise HTTPException(
-                        status_code=409,
-                        detail=tr("Lô nguồn không thuộc sản phẩm của cửa hàng"),
-                    )
-            elif product.track_batches:
-                db.rollback()
-                raise HTTPException(
-                    status_code=409,
-                    detail=tr("Dòng theo lô thiếu provenance nguồn"),
-                )
-        chi_tiet.append({
-            "dong": dong,
-            "product": product,
-            "verified_product_id": verified_product_id,
-            "quantity": int(it.quantity),
-            "restock": bool(it.restock),
-            "tien_hang": int(dong.price or 0) * int(it.quantity),
-            "tien_hoan": line_delta["refund"],
-            "line_delta": line_delta,
-            "batch_deltas": batch_deltas,
-            "batches": batches,
-        })
-
-    tien_hoan = 0
-    for d in chi_tiet:
-        tien_hoan = checked_add(tien_hoan, int(d["tien_hoan"]))
-
-    if tien_hoan > MONEY_EPSILON and request.method is None:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=tr("Phải chọn cách hoàn tiền cho khách"),
-        )
+    context = _prepare_return_context(db, current_user, order, request)
+    dong_don = context["dong_don"]
+    da_tra = context["da_tra"]
+    chi_tiet = context["chi_tiet"]
+    tien_hoan = context["tien_hoan"]
 
     shift = None
     if tien_hoan > MONEY_EPSILON and request.method == "cash":
@@ -797,6 +998,65 @@ def create_return(
             lock_for_cash_write=True,
         )
 
+    approval = None
+    if context["reason_codes"]:
+        if approval_service._is_manager(shop, current_user):
+            now = datetime.utcnow()
+            approval = models.FnbManagerApproval(
+                shop_id=shop.id,
+                approver_user_id=current_user.id,
+                actor_user_id=current_user.id,
+                action="ORDER_RETURN_EXCEPTION",
+                entity_type="ORDER",
+                entity_id=order.id,
+                revision=0,
+                context_fingerprint=context["context_fingerprint"],
+                token_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
+                expires_at=now,
+                used_at=now,
+                created_at=now,
+            )
+            db.add(approval)
+            db.flush()
+        elif not request.approval_token:
+            safe_context = _safe_approval_context(order, request, context)
+            db.rollback()
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "RETURN_APPROVAL_REQUIRED",
+                    "message": tr("Yêu cầu trả hàng này cần quản lý phê duyệt"),
+                    "approval_context": safe_context,
+                },
+            )
+        else:
+            try:
+                approval = approval_service.consume_approval(
+                    db,
+                    token=request.approval_token,
+                    shop_id=shop.id,
+                    actor_user_id=current_user.id,
+                    action="ORDER_RETURN_EXCEPTION",
+                    entity_type="ORDER",
+                    entity_id=order.id,
+                    revision=0,
+                    context_fingerprint=context["context_fingerprint"],
+                )
+            except HTTPException as exc:
+                code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+                db.rollback()
+                if code == "APPROVAL_CONTEXT_CHANGED":
+                    raise _return_error(
+                        409,
+                        "RETURN_CONTEXT_CHANGED",
+                        "Thông tin trả hàng đã thay đổi; vui lòng kiểm tra lại",
+                    )
+                raise _return_error(
+                    403,
+                    "RETURN_APPROVAL_INVALID",
+                    "Lượt duyệt trả hàng không còn hợp lệ",
+                )
+
     phieu = models.OrderReturn(
         order_id=order_id,
         shop_id=order.shop_id,
@@ -806,6 +1066,7 @@ def create_return(
         note=(request.note or "").strip()[:500] or None,
         reference=(request.reference or "").strip()[:128] or None,
         created_by_user_id=current_user.id,
+        manager_approval_id=approval.id if approval is not None else None,
         shift_id=shift.id if shift else None,
         idempotency_key=operation_key,
         operation_fingerprint=operation_fingerprint,
@@ -965,6 +1226,10 @@ def create_return(
         mo_ta += f" - hoàn {diem_duoc_hoan} điểm đã dùng"
     if phieu.reason:
         mo_ta += f" - lý do: {phieu.reason}"
+    mo_ta += f" - người thực hiện: {current_user.id}/{current_user.username}"
+    if approval is not None:
+        approver = db.get(models.User, approval.approver_user_id)
+        mo_ta += f" - người duyệt: {approval.approver_user_id}/{approver.username}"
     order_service._them_nhat_ky(db, current_user.id, "ORDER_RETURN", mo_ta)
 
     db.commit()

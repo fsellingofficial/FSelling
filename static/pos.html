@@ -12,7 +12,7 @@
     <title data-i18n="pos.page_title">POS Bán Hàng Chuyên Nghiệp | F-Selling</title>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <link rel="stylesheet" href="/css/style.css?v=20260731-i18n4">
-    <link rel="stylesheet" href="/css/pos.css?v=20260824-r14-production2&amp;landing=20260828-demo1&amp;receipt=20260829-r1&amp;receipt-image=20260829-r1&amp;receipt-lookup=20260829-r2a&amp;stabilization=20260831-r1d">
+    <link rel="stylesheet" href="/css/pos.css?v=20260824-r14-production2&amp;landing=20260828-demo1&amp;receipt=20260829-r1&amp;receipt-image=20260829-r1&amp;receipt-lookup=20260829-r2a&amp;stabilization=20260831-r1d&amp;return-r3=20260908-r3">
     <link rel="stylesheet" href="/css/onboarding-r2.css?v=20260828-r2-1">
     <link rel="stylesheet" href="/css/pos-sales-history-r1.css?v=20260830-r1">
 
@@ -427,14 +427,15 @@
                 <input id="returnOrderId" type="text" inputmode="numeric" autocomplete="off" placeholder="Ví dụ: 128" data-i18n-placeholder="pos.return.order_id_placeholder" style="flex:1;">
                 <button type="button" onclick="timDonDeTra()"><i class="ph ph-magnifying-glass"></i> <span data-i18n="pos.return.find">Tìm</span></button>
             </div>
-            <small id="returnMsg" style="display:block; margin-top:0.4rem; color:#F87171;"></small>
+            <small id="returnMsg" role="status" aria-live="polite" style="display:block; margin-top:0.4rem; color:#F87171;"></small>
 
             <div id="returnBody" style="display:none; margin-top:0.75rem;">
                 <div id="returnOrderInfo" style="font-size:0.85rem; color:#94A3B8; margin-bottom:0.5rem;"></div>
                 <div id="returnLines"></div>
+                <small id="returnConditionError" role="status" aria-live="polite" class="return-field-error"></small>
 
                 <label class="pos-field-label" for="returnMethod" data-i18n="pos.return.method">Hoàn tiền bằng</label>
-                <select id="returnMethod" onchange="capNhatFormTraHang()">
+                <select id="returnMethod" onchange="returnR3DraftEdited(); capNhatFormTraHang()">
                     <option value="cash" data-i18n="pos.return.method_cash">Tiền mặt</option>
                     <option value="transfer" data-i18n="pos.return.method_transfer">Chuyển khoản</option>
                 </select>
@@ -442,22 +443,59 @@
 
                 <div id="returnReferenceWrap" style="display:none;">
                     <label class="pos-field-label" for="returnReference" data-i18n="pos.return.reference">Mã tham chiếu chuyển khoản</label>
-                    <input id="returnReference" type="text" maxlength="128" autocomplete="off">
+                    <input id="returnReference" type="text" maxlength="128" autocomplete="off" aria-describedby="returnReferenceError" oninput="returnR3DraftEdited(); capNhatFormTraHang()">
+                    <small id="returnReferenceError" class="return-field-error"></small>
                 </div>
 
                 <label class="pos-field-label" for="returnReason" data-i18n="pos.return.reason">Lý do trả</label>
-                <input id="returnReason" type="text" maxlength="200" placeholder="Ví dụ: Không vừa size" data-i18n-placeholder="pos.return.reason_placeholder">
+                <input id="returnReason" type="text" maxlength="200" required aria-describedby="returnReasonError" oninput="returnR3DraftEdited(); capNhatFormTraHang()" placeholder="Ví dụ: Không vừa size" data-i18n-placeholder="pos.return.reason_placeholder">
+                <small id="returnReasonError" class="return-field-error"></small>
 
                 <div class="pos-modal-money" style="margin-top:0.75rem; display:flex; justify-content:space-between; align-items:center;">
                     <span data-i18n="pos.return.refund_total">Tổng tiền hoàn khách</span>
                     <strong id="returnTotal" style="font-size:1.25rem;">0 ₫</strong>
                 </div>
+                <p id="returnClientSummary" class="return-form-summary" role="status" aria-live="polite"></p>
+                <small class="return-form-hint" data-i18n="pos.return.loyalty_note">Điểm tích lũy hoặc điểm đã dùng sẽ được máy chủ điều chỉnh theo phiếu trả.</small>
+                <small class="return-form-hint" data-i18n="pos.return.may_need_approval">Đổi cách hoàn hoặc hàng không nhập lại kho có thể cần quản lý duyệt.</small>
                 <small id="returnDiscountNote" style="display:none; color:#FBBF24;" data-i18n="pos.return.discount_note">Đơn có giảm bằng voucher hoặc điểm nên tiền hoàn được tính theo tỷ lệ thực thu, thấp hơn giá niêm yết.</small>
+                <p id="returnFormStatus" role="status" aria-live="polite" class="return-form-status"></p>
+                <button id="btnRetryReturn" type="button" class="btn-outline" hidden onclick="thuLaiPhieuTraHang()" data-i18n="pos.return.retry_exact">Thử lại đúng phiếu này</button>
             </div>
 
             <div class="pos-modal-actions">
                 <button type="button" class="btn-outline" onclick="dongModalTraHang()" data-i18n="pos.modal.cancel">Hủy</button>
                 <button id="btnSubmitReturn" type="button" onclick="ghiNhanTraHang()" disabled><i class="ph ph-check-circle"></i> <span data-i18n="pos.return.submit">Xác nhận trả hàng</span></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="returnApprovalModal" class="pos-modal" role="dialog" aria-modal="true" aria-labelledby="returnApprovalTitle" style="display:none;">
+        <div class="pos-modal-card return-approval-card">
+            <div class="pos-modal-head">
+                <div>
+                    <small data-i18n="pos.return.approval_eyebrow">QUẢN LÝ DUYỆT</small>
+                    <h3 id="returnApprovalTitle" data-i18n="pos.return.approval_title">Duyệt ngoại lệ trả hàng</h3>
+                </div>
+                <button type="button" class="pos-modal-close" onclick="dongModalDuyetTraHang()" aria-label="Đóng" data-i18n-aria-label="pos.modal.close">&times;</button>
+            </div>
+            <dl class="return-approval-summary">
+                <div><dt data-i18n="pos.return.approval_order">Đơn</dt><dd id="returnApprovalOrder"></dd></div>
+                <div><dt data-i18n="pos.return.approval_actor">Người thao tác</dt><dd id="returnApprovalActor"></dd></div>
+                <div><dt data-i18n="pos.return.approval_amount">Tiền hoàn</dt><dd id="returnApprovalAmount"></dd></div>
+                <div><dt data-i18n="pos.return.approval_method">Cách hoàn</dt><dd id="returnApprovalMethod"></dd></div>
+                <div><dt data-i18n="pos.return.approval_non_restock">Dòng không nhập kho</dt><dd id="returnApprovalNonRestock"></dd></div>
+                <div><dt data-i18n="pos.return.approval_reason">Lý do</dt><dd id="returnApprovalReason"></dd></div>
+                <div><dt data-i18n="pos.return.approval_codes">Ngoại lệ</dt><dd id="returnApprovalCodes"></dd></div>
+            </dl>
+            <label class="pos-field-label" for="returnApproverUsername" data-i18n="pos.return.approver_username">Tài khoản quản lý</label>
+            <input id="returnApproverUsername" type="text" maxlength="100" autocomplete="username">
+            <label class="pos-field-label" for="returnApproverPin" data-i18n="pos.return.approver_pin">PIN quản lý</label>
+            <input id="returnApproverPin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="new-password" aria-describedby="returnApprovalStatus">
+            <p id="returnApprovalStatus" role="status" aria-live="polite" class="return-form-status"></p>
+            <div class="pos-modal-actions">
+                <button type="button" class="btn-outline" onclick="dongModalDuyetTraHang()" data-i18n="pos.modal.cancel">Hủy</button>
+                <button type="button" onclick="guiYeuCauDuyetTraHang()" data-i18n="pos.return.approve">Duyệt và ghi phiếu</button>
             </div>
         </div>
     </div>
@@ -542,7 +580,7 @@
 
     <script src="/js/vendor/i18next-26.3.6.min.js?v=20260731-i18n4"></script>
     <script src="/js/locales/common.js?v=20260901-fnb-r1b"></script>
-    <script src="/js/locales/pos.js?v=20260815-i11-doisoat&amp;landing=20260828-demo1&amp;onboarding=20260828-r2-1&amp;uat=20260829-p1&amp;receipt=20260829-r1&amp;receipt-image=20260829-r1&amp;receipt-lookup=20260829-r2a&amp;sales-history=20260830-r1&amp;stabilization=20260831-r1d&amp;fnb=20260901-r1a&amp;fnb-receipt=20260902-r1d"></script>
+    <script src="/js/locales/pos.js?v=20260815-i11-doisoat&amp;landing=20260828-demo1&amp;onboarding=20260828-r2-1&amp;uat=20260829-p1&amp;receipt=20260829-r1&amp;receipt-image=20260829-r1&amp;receipt-lookup=20260829-r2a&amp;sales-history=20260830-r1&amp;stabilization=20260831-r1d&amp;fnb=20260901-r1a&amp;fnb-receipt=20260902-r1d&amp;return-r3=20260908-r3"></script>
     <script src="/js/i18n.js?v=20260731-i18n4"></script>
 <script src="/js/api.js?v=20260812-i09-f1-c1&g=20260813-i09-g2h2&fnb=20260901-r1a"></script>
     <!-- barcode.js phải nạp trước pos.js: pos.js gọi BarcodeScanner.batDau() ngay khi chạy. -->
@@ -582,7 +620,7 @@
     <script src="/js/doc-tien.js?v=20260731-i18n4"></script>
     <script src="/js/offline-ban.js?v=20260813-i09-f3&g=20260813-i09-g2h6"></script>
     <script src="/js/pos-sales-history-r1.js?v=20260830-r1a&amp;fnb=20260902-r1d"></script>
-    <script src="/js/pos.js?v=20260824-r14-production2&amp;onboarding=20260828-r2-1&amp;uat=20260829-p1&amp;receipt=20260829-r1&amp;receipt-image=20260829-r1&amp;receipt-lookup=20260829-r2a&amp;sales-history=20260830-r1&amp;stabilization=20260831-r1d&amp;fnb=20260901-r1a&amp;fnb-receipt=20260902-r1d"></script>
+    <script src="/js/pos.js?v=20260824-r14-production2&amp;onboarding=20260828-r2-1&amp;uat=20260829-p1&amp;receipt=20260829-r1&amp;receipt-image=20260829-r1&amp;receipt-lookup=20260829-r2a&amp;sales-history=20260830-r1&amp;stabilization=20260831-r1d&amp;fnb=20260901-r1a&amp;fnb-receipt=20260902-r1d&amp;return-r3=20260908-r3"></script>
     <script>
         (function () {
             if (new URLSearchParams(window.location.search).get('tour') !== 'sale') return;

@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-StaffRole = Literal["CASHIER", "WAREHOUSE", "MANAGER", "KITCHEN", "BAR"]
+StaffRole = Literal["CASHIER", "SERVICE", "WAREHOUSE", "MANAGER", "KITCHEN", "BAR"]
 
 
 class StaffCreate(BaseModel):

@@ -711,6 +711,8 @@ def test_v1_missing_product_nulls_business_fk_and_keeps_claimed_snapshot(client)
             "operation_id": "return-missing-product-restock",
             "items": [{"order_item_id": order_item_id, "quantity": 1, "restock": True}],
             "method": "transfer",
+            "reason": "Kiểm thử hoàn offline",
+            "reference": "TEST-RETURN",
         },
     )
     assert blocked.status_code == 409, blocked.text
@@ -727,6 +729,8 @@ def test_v1_missing_product_nulls_business_fk_and_keeps_claimed_snapshot(client)
         "operation_id": "return-missing-product-no-restock",
         "items": [{"order_item_id": order_item_id, "quantity": 1, "restock": False}],
         "method": "transfer",
+        "reason": "Kiểm thử hoàn offline",
+        "reference": "TEST-RETURN",
     }
     accepted = client.post(
         f"/api/orders/{order_id}/returns",
@@ -881,6 +885,8 @@ def test_v1_cross_shop_claim_never_becomes_inventory_fk_and_return_is_atomic(cli
             "operation_id": "return-cross-shop-claim",
             "items": [{"order_item_id": order_item_id, "quantity": 1, "restock": True}],
             "method": "transfer",
+            "reason": "Kiểm thử hoàn offline",
+            "reference": "TEST-RETURN",
         },
     )
     assert failed.status_code == 409, failed.text
@@ -898,6 +904,8 @@ def test_v1_cross_shop_claim_never_becomes_inventory_fk_and_return_is_atomic(cli
         "operation_id": "return-cross-shop-no-restock",
         "items": [{"order_item_id": order_item_id, "quantity": 1, "restock": False}],
         "method": "transfer",
+        "reason": "Kiểm thử hoàn offline",
+        "reference": "TEST-RETURN",
     }
     accepted = client.post(
         f"/api/orders/{order_id}/returns",

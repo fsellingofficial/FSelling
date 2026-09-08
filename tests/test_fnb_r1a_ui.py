@@ -62,6 +62,8 @@ def test_fnb_page_and_assets_are_wired(client):
     assert 'aria-describedby="fnbCashTenderedHelp fnbCashTenderedError"' in html
     assert "/js/locales/fnb.js?v=20260907-plan2" in html
     assert "/js/fnb-r1a.js?v=20260907-plan2-correction1" in html
+    assert html.count("roles-return=20260908-r3") == 2
+    assert "roles-return=20260908-r3-c1" in html
     source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
     assert "values.voucher_code = voucherCode" in source
     assert "values.loyalty_points_to_use = loyaltyPoints" in source
@@ -91,6 +93,7 @@ def test_fnb_station_page_and_role_routing_are_wired(client):
     assert "/js/i18n.js?" in page.text
 
     source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
+    pos_source = (ROOT / "static/js/pos.js").read_text(encoding="utf-8")
     assert "['KITCHEN', 'BAR'].includes(staffRole)" in source
     assert "document.querySelectorAll('.fnb-queue-link')" in source
     station_source = (ROOT / "static/js/fnb-station-r1b.js").read_text(encoding="utf-8")
@@ -98,6 +101,27 @@ def test_fnb_station_page_and_role_routing_are_wired(client):
     assert "controller.retryPending()" in station_source
     assert 'data-action="resume"' in station_source
     assert "Sẵn sàng giao" in station_source
+
+
+def test_service_role_keeps_service_controls_and_hides_financial_setup_controls():
+    html = (ROOT / "static/fnb.html").read_text(encoding="utf-8")
+    source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
+    pos_source = (ROOT / "static/js/pos.js").read_text(encoding="utf-8")
+    locale = (ROOT / "static/js/locales/fnb.js").read_text(encoding="utf-8")
+
+    assert 'id="fnbRoleHandoff"' in html
+    assert "['SERVICE', 'CASHIER', 'MANAGER'].includes(deps.staffRole)" in source
+    assert "roleCapabilities.checkout" in source
+    assert "elements.fnbCheckoutOpen.hidden" in source
+    assert "elements.fnbPinForm.hidden" in source
+    assert "elements.fnbTableActions.hidden = !roleCapabilities.service" in source
+    assert "elements.fnbMergeTable.hidden = !roleCapabilities.setup" in source
+    assert source.count("roleCapabilities.checkout ? controller.loadChecks() : undefined") == 2
+    assert "data-action=\"serve-ticket\"" in source
+    assert "data-action=\"move-table\"" in html
+    assert locale.count("'fnb.auth.service_handoff'") == 2
+    assert "POS_STAFF_ROLE === 'SERVICE'" in pos_source
+    assert "navigateToPage('/fnb')" in pos_source
 
 
 def test_fnb_role_translations_use_one_fresh_common_catalog_url():

@@ -523,6 +523,28 @@ def test_nonempty_session_cannot_cancel_until_billable_quantity_is_zero(client, 
     assert denied.json()["detail"]["code"] == "FNB_SESSION_NOT_EMPTY"
 
 
+def test_service_can_move_table_but_cashier_cannot(client, fnb_ctx):
+    _, service = new_staff(client, fnb_ctx, "SERVICE")
+    service_ctx = {**fnb_ctx, "token": service}
+    session = open_session(client, service_ctx, fnb_ctx["table_1"], "service-open-0001").json()
+    source = table_snapshot(client, service_ctx, fnb_ctx["table_1"]["id"])
+    target = table_snapshot(client, service_ctx, fnb_ctx["table_2"]["id"])
+    moved = client.post(
+        f"/api/fnb/sessions/{session['id']}/move-table",
+        json={
+            "from_table_id": source["id"],
+            "to_table_id": target["id"],
+            "expected_revision": session["revision"],
+            "expected_from_state_version": source["state_version"],
+            "expected_to_state_version": target["state_version"],
+            "operation_id": "service-move-0001",
+        },
+        headers=auth(service),
+    )
+    assert moved.status_code == 200, moved.text
+    assert [row["id"] for row in moved.json()["tables"]] == [target["id"]]
+
+
 def test_cashier_can_serve_but_cannot_move_or_merge(client, fnb_ctx):
     _, cashier = new_staff(client, fnb_ctx, "CASHIER")
     cashier_ctx = {**fnb_ctx, "token": cashier}

@@ -109,6 +109,7 @@ ROUTES_BO_SUNG = {
     # F2: nhận hàng khách trả. Khác hủy đơn (đơn chưa thanh toán) và khác
     # refund-complete (hoàn khoản chuyển thừa, hàng vẫn của khách).
     ("POST", "/api/orders/{order_id}/returns"),
+    ("POST", "/api/orders/{order_id}/returns/approval"),
     # F4: khách trả bớt nợ. Khác cash-topup (đơn chuyển thiếu, phải trả trọn
     # phần còn thiếu) vì trả nợ dần nhiều lần là chuyện bình thường.
     ("POST", "/api/orders/{order_id}/debt-payment"),
@@ -258,6 +259,7 @@ ROUTES_BO_SUNG = {
     ("POST", "/api/fnb/tickets/{ticket_id}/serve"),
     ("PATCH", "/api/fnb/shops/{shop_id}/manager-pin"),
     ("POST", "/api/fnb/manager-approvals"),
+    ("PATCH", "/api/shops/{shop_id}/manager-pin"),
     # F&B R1C: bill, split, provisional receipt, payment and safe table close.
     ("GET", "/api/fnb/sessions/{session_id}/checks"),
     ("POST", "/api/fnb/checks/{check_id}/split-preview"),

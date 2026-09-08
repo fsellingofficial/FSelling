@@ -128,10 +128,10 @@ class OrderReturnItemCreate(BaseModel):
     quantity: int
     # Hàng còn tốt thì cộng lại tồn kho; hàng hỏng/bẩn/hết hạn thì vẫn hoàn tiền
     # nhưng KHÔNG được quay lại kệ.
-    restock: bool = True
+    restock: bool
 
 
-class OrderReturnCreate(BaseModel):
+class OrderReturnDraft(BaseModel):
     """Một lần nhận hàng trả. Server tự tính tiền hoàn, client không gửi số tiền.
 
     `method` được phép bỏ trống khi tiền hoàn bằng 0 (đơn giảm giá 100%).
@@ -139,12 +139,22 @@ class OrderReturnCreate(BaseModel):
 
     items: List[OrderReturnItemCreate]
     method: Optional[Literal["cash", "transfer"]] = None
-    reason: Optional[str] = None
-    note: Optional[str] = None
-    reference: Optional[str] = None
+    reason: Optional[str] = Field(default=None, max_length=200)
+    note: Optional[str] = Field(default=None, max_length=500)
+    reference: Optional[str] = Field(default=None, max_length=128)
     # Một id cho đúng MỘT lần bấm nhận trả. Retry mạng dùng lại id này nên không
     # thể vô tình tạo hai phiếu trả cho cùng một lần khách mang hàng đến.
     operation_id: str = Field(min_length=8, max_length=128)
+
+
+class OrderReturnCreate(OrderReturnDraft):
+    approval_token: Optional[str] = Field(default=None, min_length=32, max_length=256)
+
+
+class OrderReturnApprovalCreate(OrderReturnDraft):
+    context_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    approver_username: str = Field(min_length=1, max_length=100)
+    pin: str = Field(pattern=r"^\d{4,6}$")
 
 
 class DebtPayment(BaseModel):

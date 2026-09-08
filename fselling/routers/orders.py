@@ -16,6 +16,7 @@ from ..schemas.order import (
     OfflineOrderCreate,
     OfflineOrderCreateV1,
     OrderCreate,
+    OrderReturnApprovalCreate,
     OrderReturnCreate,
     RefundComplete,
 )
@@ -275,6 +276,18 @@ def create_order_return(
     current_user: models.User = Depends(get_current_user),
 ):
     return return_service.create_return(db, current_user, order_id, payload)
+
+
+@router.post("/{order_id}/returns/approval")
+def approve_return(
+    order_id: int,
+    request: OrderReturnApprovalCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return return_service.create_return_approval(
+        db, current_user, order_id, request
+    )
 
 
 @router.post("/{order_id}/pay")

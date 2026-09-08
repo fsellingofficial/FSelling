@@ -88,7 +88,7 @@
                             <select id="fnbTargetTable"></select>
                             <div>
                                 <button type="button" class="fnb-secondary" data-action="move-table" data-i18n="fnb.table_actions.move">Chuyển bàn</button>
-                                <button type="button" class="fnb-secondary" data-action="merge-table" data-i18n="fnb.table_actions.merge">Gộp bàn</button>
+                                <button id="fnbMergeTable" type="button" class="fnb-secondary" data-action="merge-table" data-i18n="fnb.table_actions.merge" hidden>Gộp bàn</button>
                             </div>
                         </details>
                         <p id="fnbSessionStatus" role="status" aria-live="polite"></p>
@@ -96,6 +96,7 @@
                     <footer>
                         <strong id="fnbSubtotal"></strong>
                         <p id="fnbCheckoutHint" class="fnb-action-hint" hidden></p>
+                        <p id="fnbRoleHandoff" class="fnb-action-hint" role="status" aria-live="polite" hidden></p>
                         <div class="fnb-bill-actions">
                             <button id="fnbCancelSession" type="button" class="fnb-secondary" data-i18n="fnb.session.cancel">Hủy phiên trống</button>
                             <button id="fnbCheckoutOpen" type="button" class="fnb-secondary" data-i18n="fnb.checkout.open">Tính tiền</button>
@@ -250,10 +251,10 @@
     <div id="toast" role="status" aria-live="polite"></div>
     <script src="/js/vendor/i18next-26.3.6.min.js?v=20260731-i18n4"></script>
     <script src="/js/locales/common.js?v=20260901-fnb-r1b"></script>
-    <script src="/js/locales/fnb.js?v=20260907-plan2"></script>
+    <script src="/js/locales/fnb.js?v=20260907-plan2&amp;roles-return=20260908-r3"></script>
     <script src="/js/i18n.js?v=20260731-i18n4"></script>
     <script src="/js/api.js?v=20260901-fnb-r1a&amp;g=20260813-i09-g2h2"></script>
-    <script src="/js/fnb-r1a.js?v=20260907-plan2-correction1"></script>
+    <script src="/js/fnb-r1a.js?v=20260907-plan2-correction1&amp;roles-return=20260908-r3-c1"></script>
     <script src="/js/pwa.js?v=20260806-pwa"></script>
 </body>
 </html>

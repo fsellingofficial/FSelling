@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
-import secrets
 import unicodedata
 
 from fastapi import HTTPException
@@ -21,14 +20,12 @@ from ..core.money import (
     round_percentage_vnd,
 )
 from ..core.numeric_limits import MAX_SAFE_QUANTITY
-from ..core.security import burn_password_time, hash_password, verify_password
 from ..dependencies import (
     PERMISSION_FNB_MANAGE,
     PERMISSION_FNB_BAR,
     PERMISSION_FNB_CHECKOUT,
     PERMISSION_FNB_KITCHEN,
     PERMISSION_FNB_SERVICE,
-    STAFF_ROLE_MANAGER,
     effective_staff_role,
     has_shop_operator_access,
     require_own_shop,
@@ -46,7 +43,6 @@ from ..schemas.fnb import (
     FnbLineCreate,
     FnbLineUpdate,
     FnbManagerApprovalCreate,
-    FnbManagerPinSet,
     FnbMergeTable,
     FnbMoveTable,
     FnbSessionCancel,
@@ -59,7 +55,9 @@ from ..schemas.fnb import (
     FnbTableUpdate,
     FnbTicketTransition,
 )
+from ..schemas.shop import ManagerPinSet
 from . import (
+    approval_service,
     inventory_service,
     loyalty_service,
     order_service,
@@ -366,20 +364,21 @@ def set_manager_pin(
     db: Session,
     current_user: models.User,
     shop_id: int,
-    request: FnbManagerPinSet,
+    request: ManagerPinSet,
 ) -> dict:
-    shop = require_fnb_access(db, shop_id, current_user, PERMISSION_FNB_MANAGE)
-    is_owner = shop.owner_id == current_user.id
-    is_manager = (
-        current_user.role == "STAFF"
-        and effective_staff_role(current_user) == STAFF_ROLE_MANAGER
-        and current_user.staff_shop_id == shop_id
-    )
-    if not (is_owner or is_manager):
-        raise fnb_error(403, "FNB_MANAGER_REQUIRED", "Chỉ chủ quán hoặc quản lý được đặt PIN")
-    current_user.fnb_manager_pin_hash = hash_password(request.pin)
-    db.commit()
-    return {"shop_id": shop_id, "manager_pin_configured": True}
+    require_fnb_access(db, shop_id, current_user, PERMISSION_FNB_MANAGE)
+    try:
+        return approval_service.set_manager_pin(
+            db, current_user, shop_id, request.pin
+        )
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and exc.detail.get("code") == "MANAGER_REQUIRED":
+            raise fnb_error(
+                exc.status_code,
+                "FNB_MANAGER_REQUIRED",
+                "Chỉ chủ quán hoặc quản lý được đặt PIN",
+            ) from exc
+        raise
 
 
 def create_manager_approval(
@@ -401,76 +400,38 @@ def create_manager_approval(
     if session is None:
         raise fnb_error(404, "FNB_SESSION_NOT_FOUND", "Không tìm thấy phiên phục vụ")
     require_session_revision(db, session, request.revision)
-    approver = (
-        db.query(models.User)
-        .filter(models.User.username == request.approver_username, models.User.is_active == True)  # noqa: E712
-        .first()
-    )
-    valid_approver = approver is not None and (
-        approver.id == shop.owner_id
-        or (
-            approver.role == "STAFF"
-            and approver.staff_shop_id == request.shop_id
-            and effective_staff_role(approver) == STAFF_ROLE_MANAGER
-        )
-    )
-    now = datetime.datetime.utcnow()
-    failed_attempts = (
-        db.query(models.FnbManagerApproval)
-        .filter(
-            models.FnbManagerApproval.shop_id == request.shop_id,
-            models.FnbManagerApproval.actor_user_id == current_user.id,
-            models.FnbManagerApproval.action == "PIN_FAILED",
-            models.FnbManagerApproval.created_at >= now - datetime.timedelta(minutes=15),
-        )
-        .count()
-    )
-    if failed_attempts >= 5:
-        raise fnb_error(
-            429,
-            "FNB_PIN_RATE_LIMITED",
-            "Đã nhập sai PIN quá nhiều lần; vui lòng thử lại sau",
-            retry_after_seconds=900,
-        )
-    pin_hash = approver.fnb_manager_pin_hash if valid_approver else None
-    pin_ok = False
-    if pin_hash is None:
-        burn_password_time()
-    else:
-        pin_ok = verify_password(request.pin, pin_hash)
-    if not pin_ok:
-        db.add(
-            models.FnbManagerApproval(
-                shop_id=request.shop_id,
-                approver_user_id=approver.id if valid_approver else current_user.id,
-                actor_user_id=current_user.id,
-                action="PIN_FAILED",
-                entity_type=request.entity_type,
-                entity_id=request.entity_id,
-                revision=request.revision,
-                token_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
-                expires_at=now,
-                used_at=now,
-            )
-        )
-        db.commit()
-        raise fnb_error(403, "FNB_PIN_INVALID", "PIN quản lý không đúng")
-    token = secrets.token_urlsafe(32)
-    db.add(
-        models.FnbManagerApproval(
-            shop_id=request.shop_id,
-            approver_user_id=approver.id,
-            actor_user_id=current_user.id,
+    try:
+        token, _ = approval_service.issue_pin_approval(
+            db,
+            shop=shop,
+            actor=current_user,
+            approver_username=request.approver_username,
+            pin=request.pin,
             action=request.action,
             entity_type=request.entity_type,
             entity_id=request.entity_id,
             revision=request.revision,
-            token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
-            expires_at=datetime.datetime.utcnow() + datetime.timedelta(minutes=5),
         )
-    )
-    db.commit()
-    return {"approval_token": token, "expires_in_seconds": 300}
+        db.commit()
+        return {"approval_token": token, "expires_in_seconds": 300}
+    except HTTPException as exc:
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+        mapping = {
+            "APPROVAL_PIN_INVALID": ("FNB_PIN_INVALID", "PIN quản lý không đúng"),
+            "APPROVAL_RATE_LIMITED": (
+                "FNB_PIN_RATE_LIMITED",
+                "Đã nhập sai PIN quá nhiều lần; vui lòng thử lại sau",
+            ),
+        }
+        if code in mapping:
+            legacy_code, message = mapping[code]
+            extra = {
+                key: value
+                for key, value in exc.detail.items()
+                if key not in {"code", "message"}
+            }
+            raise fnb_error(exc.status_code, legacy_code, message, **extra) from exc
+        raise
 
 
 def create_area(
@@ -2714,26 +2675,25 @@ def _approval_for_sent_cancel(
 ) -> models.FnbManagerApproval:
     if not token:
         raise fnb_error(403, "FNB_APPROVAL_REQUIRED", "Cần PIN quản lý để hủy món đang làm")
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    approval = (
-        db.query(models.FnbManagerApproval)
-        .filter(
-            models.FnbManagerApproval.token_hash == token_hash,
-            models.FnbManagerApproval.shop_id == session.shop_id,
-            models.FnbManagerApproval.actor_user_id == current_user.id,
-            models.FnbManagerApproval.action == "CANCEL_SENT_LINE",
-            models.FnbManagerApproval.entity_type == "SESSION",
-            models.FnbManagerApproval.entity_id == session.id,
-            models.FnbManagerApproval.revision == session.revision,
-            models.FnbManagerApproval.used_at.is_(None),
-            models.FnbManagerApproval.expires_at > datetime.datetime.utcnow(),
+    try:
+        return approval_service.consume_approval(
+            db,
+            token=token,
+            shop_id=session.shop_id,
+            actor_user_id=current_user.id,
+            action="CANCEL_SENT_LINE",
+            entity_type="SESSION",
+            entity_id=session.id,
+            revision=session.revision,
         )
-        .first()
-    )
-    if approval is None:
-        raise fnb_error(403, "FNB_APPROVAL_INVALID", "Lượt duyệt không còn hợp lệ")
-    approval.used_at = datetime.datetime.utcnow()
-    return approval
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and exc.detail.get("code") == "APPROVAL_INVALID":
+            raise fnb_error(
+                exc.status_code,
+                "FNB_APPROVAL_INVALID",
+                "Lượt duyệt không còn hợp lệ",
+            ) from exc
+        raise
 
 
 def _resolve_sent_allocations(
@@ -2988,16 +2948,21 @@ def move_table(
 ) -> dict:
     action = "FNB_TABLE_MOVE"
     fingerprint = operation_fingerprint(action, _payload(request, session_id=session_id))
+    move_permission = (
+        PERMISSION_FNB_SERVICE
+        if effective_staff_role(current_user) == "SERVICE"
+        else PERMISSION_FNB_MANAGE
+    )
     try:
         session = _session_for_access(
-            db, current_user, session_id, PERMISSION_FNB_MANAGE
+            db, current_user, session_id, move_permission
         )
         shop_id = int(session.shop_id)
         _prepare_locked_shop(db, shop_id)
         session = _session_for_access(
-            db, current_user, session_id, PERMISSION_FNB_MANAGE
+            db, current_user, session_id, move_permission
         )
-        shop = require_fnb_access(db, shop_id, current_user, PERMISSION_FNB_MANAGE)
+        shop = require_fnb_access(db, shop_id, current_user, move_permission)
         existing = _existing_operation(db, shop_id, request.operation_id, fingerprint)
         if existing is not None:
             db.rollback()

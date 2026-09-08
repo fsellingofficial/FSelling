@@ -8,8 +8,12 @@ const MY_STAFF_ROLE = MY_ROLE === 'STAFF'
 if (MY_ROLE === 'STAFF' && ['KITCHEN', 'BAR'].includes(MY_STAFF_ROLE)) {
     navigateToPage(`/fnb/station/${MY_STAFF_ROLE.toLowerCase()}`);
 }
+if (MY_ROLE === 'STAFF' && MY_STAFF_ROLE === 'SERVICE') {
+    navigateToPage('/fnb');
+}
 const STAFF_UI_PERMISSIONS = Object.freeze({
     CASHIER: new Set(['SALE', 'CUSTOMER']),
+    SERVICE: new Set(),
     WAREHOUSE: new Set(['INVENTORY']),
     MANAGER: new Set(['SALE', 'INVENTORY', 'CUSTOMER', 'REPORT', 'VOUCHER', 'RECONCILIATION'])
 });
@@ -553,6 +557,9 @@ async function init() {
     try {
         allShops = await apiCall('/shops');
         renderShopsList(); // Cho phần cài đặt
+        if (MY_ROLE === 'SELLER' || MY_STAFF_ROLE === 'MANAGER') {
+            renderReturnManagerPinShopOptions();
+        }
         // Danh sách nhân viên chỉ dành cho chủ shop (nhân viên gọi sẽ bị 404).
         if (MY_ROLE === 'SELLER') renderStaffShopOptions();
         if (MY_ROLE !== 'ADMIN' && coQuyenNhanVien('CUSTOMER')) renderCustomerShopOptions();
@@ -5745,11 +5752,15 @@ function applyRoleUI() {
     // họ mới là người đứng quầy POS và nghe cái loa đó. Nên giữ tab Cài Đặt,
     // chỉ giấu phần cấu hình cửa hàng bên dưới.
     document.querySelectorAll('#settings > *').forEach(el => {
-        if (el.id !== 'khoiDocTien') el.style.display = 'none';
+        if (
+            el.id !== 'khoiDocTien'
+            && !(MY_STAFF_ROLE === 'MANAGER' && el.id === 'returnApprovalSettings')
+        ) el.style.display = 'none';
     });
 
     const allowedTabs = {
         CASHIER: new Set(['customers', 'settings']),
+        SERVICE: new Set(),
         WAREHOUSE: new Set(['warehouse', 'kiemke', 'settings']),
         MANAGER: new Set([
             'dashboard', 'reconciliation', 'warehouse', 'kiemke',
@@ -5782,6 +5793,32 @@ function renderStaffShopOptions() {
     if (allShops.length) loadStaff();
 }
 
+function renderReturnManagerPinShopOptions() {
+    const select = document.getElementById('returnManagerPinShop');
+    if (!select) return;
+    select.innerHTML = allShops.map(
+        shop => `<option value="${shop.id}">${escapeHtml(shop.name)}</option>`
+    ).join('');
+}
+
+async function saveReturnManagerPin() {
+    const shopId = Number(document.getElementById('returnManagerPinShop').value);
+    const pinField = document.getElementById('returnManagerPin');
+    const status = document.getElementById('returnManagerPinStatus');
+    if (!shopId || !/^\d{4,6}$/.test(pinField.value)) {
+        status.textContent = t('seller.return_pin.invalid');
+        return;
+    }
+    try {
+        await apiCall(`/shops/${shopId}/manager-pin`, 'PATCH', { pin: pinField.value });
+        pinField.value = '';
+        status.textContent = t('seller.return_pin.saved');
+    } catch (error) {
+        pinField.value = '';
+        status.textContent = error.message;
+    }
+}
+
 function renderStaff(list) {
     const tbody = document.getElementById('staffList');
     tbody.innerHTML = '';
@@ -5798,6 +5835,7 @@ function renderStaff(list) {
             <td>
                 <select onchange="capNhatVaiTroNhanVien(${staffId}, this)" style="margin: 0; min-width: 8.5rem;">
                     <option value="CASHIER" ${selectedRole === 'CASHIER' ? 'selected' : ''}>${escapeHtml(t('common.role.cashier'))}</option>
+                    <option value="SERVICE" ${selectedRole === 'SERVICE' ? 'selected' : ''}>${escapeHtml(t('seller.staff.role_service'))}</option>
                     <option value="WAREHOUSE" ${selectedRole === 'WAREHOUSE' ? 'selected' : ''}>${escapeHtml(t('common.role.warehouse'))}</option>
                     <option value="MANAGER" ${selectedRole === 'MANAGER' ? 'selected' : ''}>${escapeHtml(t('common.role.manager'))}</option>
                     <option value="KITCHEN" ${selectedRole === 'KITCHEN' ? 'selected' : ''}>${escapeHtml(t('common.role.kitchen'))}</option>

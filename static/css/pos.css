@@ -1982,3 +1982,57 @@ body.pos-modal-open {
         transition: none !important;
     }
 }
+/* Explicit return condition and compact manager handoff. */
+.return-condition {
+    width: 100%;
+    margin: .35rem 0 0;
+    padding: .45rem .6rem;
+    border: 1px solid #475569;
+    border-radius: 8px;
+}
+
+.return-condition legend {
+    padding: 0 .25rem;
+    color: #cbd5e1;
+    font-size: .78rem;
+}
+
+.return-condition label {
+    display: flex;
+    gap: .4rem;
+    align-items: center;
+    margin: .35rem 0;
+    font-size: .82rem;
+}
+
+.return-field-error,
+.return-form-status {
+    display: block;
+    min-height: 1.1rem;
+    margin: .3rem 0;
+    color: #fca5a5;
+    font-size: .8rem;
+}
+
+.return-form-summary,
+.return-form-hint {
+    display: block;
+    margin: .35rem 0;
+    color: #cbd5e1;
+    font-size: .8rem;
+}
+
+.return-approval-summary {
+    display: grid;
+    gap: .4rem;
+    margin: 0 0 .75rem;
+}
+
+.return-approval-summary div {
+    display: grid;
+    grid-template-columns: minmax(8rem, 40%) 1fr;
+    gap: .5rem;
+}
+
+.return-approval-summary dt { color: #94a3b8; }
+.return-approval-summary dd { margin: 0; overflow-wrap: anywhere; }

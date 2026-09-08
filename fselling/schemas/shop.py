@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ShopCreate(BaseModel):
@@ -12,3 +12,7 @@ class ShopCreate(BaseModel):
     bank_account_no: Optional[str] = None
     bank_account_name: Optional[str] = None
     bank_code: Optional[str] = None
+
+
+class ManagerPinSet(BaseModel):
+    pin: str = Field(pattern=r"^\d{4,6}$")

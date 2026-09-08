@@ -12,8 +12,8 @@ from ..core.config import MAX_SHOPS_PER_USER, log_to_file
 from ..core.i18n import tr
 from ..core.security import new_session_id
 from ..dependencies import require_own_shop
-from ..schemas.shop import ShopCreate
-from . import subscription_service
+from ..schemas.shop import ManagerPinSet, ShopCreate
+from . import approval_service, subscription_service
 from .log_service import log_system_action
 
 # (thuộc tính trên model, giá trị từ request, thông báo lỗi khi rỗng)
@@ -25,6 +25,12 @@ _REQUIRED_FIELDS = [
 _BANK_FIELDS = frozenset({"bank_code", "bank_account_no", "bank_account_name"})
 ERROR_QR_BANK_ACCOUNT_CHANGE_BLOCKED = "QR_BANK_ACCOUNT_CHANGE_BLOCKED"
 _PROVIDER_COLLISION_REASON = "PROVIDER_EVENT_COLLISION"
+
+
+def set_manager_pin(
+    db: Session, current_user: models.User, shop_id: int, request: ManagerPinSet
+) -> dict:
+    return approval_service.set_manager_pin(db, current_user, shop_id, request.pin)
 
 
 def _assert_qr_account_change_allowed(db: Session, shop_id: int) -> None:

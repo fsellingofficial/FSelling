@@ -192,6 +192,7 @@ class FnbStockAllocation(Base):
 
 
 class FnbManagerApproval(Base):
+    # Legacy table name retained for compatibility with existing F&B approvals.
     __tablename__ = "fnb_manager_approvals"
     id = Column(Integer, primary_key=True)
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
@@ -202,6 +203,7 @@ class FnbManagerApproval(Base):
     entity_id = Column(Integer, nullable=False)
     revision = Column(Integer, nullable=False)
     token_hash = Column(String(64), nullable=False, unique=True)
+    context_fingerprint = Column(String(64), nullable=True)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)

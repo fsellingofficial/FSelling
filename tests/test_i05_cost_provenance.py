@@ -76,6 +76,8 @@ def _return(client, ctx, order_id: int, item_id: int, quantity: int, *, restock:
                 }
             ],
             "method": "transfer",
+            "reason": "Khách trả hàng",
+            "reference": "TEST-RETURN",
             "operation_id": operation_id,
         },
         headers=auth(ctx["token"]),

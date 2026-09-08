@@ -1923,3 +1923,18 @@ body.seller-page {
     .assistant-chat { scroll-behavior: auto; }
     .assistant-request-status[data-state="loading"]::before { animation: none; }
 }
+.return-pin-settings {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.return-pin-settings p,
+.staff-role-help {
+    color: var(--text-muted);
+    font-size: .85rem;
+    line-height: 1.5;
+}
+
+.staff-role-help { margin: 0 0 1rem; padding-left: 1.25rem; }

@@ -64,6 +64,8 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
             navigateToPage('/admin');
         } else if (openDemoSale && data.role === 'SELLER') {
             navigateToPage('/pos?tour=sale');
+        } else if (data.role === 'STAFF' && data.staff_role === 'SERVICE') {
+            navigateToPage('/fnb');
         } else if (data.role === 'STAFF' && data.staff_role === 'CASHIER') {
             navigateToPage('/pos');
         } else if (data.role === 'STAFF' && ['KITCHEN', 'BAR'].includes(data.staff_role)) {

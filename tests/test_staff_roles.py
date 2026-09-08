@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from conftest import (
     SHOP_PAYLOAD,
     STAFF_PASSWORD,
@@ -13,7 +15,7 @@ from conftest import (
     seller_with_shop,
 )
 
-from fselling import models
+from fselling import dependencies, models
 import legacy_bootstrap_support as bootstrap
 from fselling.core.database import SessionLocal
 
@@ -51,6 +53,77 @@ def test_staff_mac_dinh_manager_giu_quyen_cu(client):
     assert client.get(
         f"/api/dashboard/seller/{ctx['shop_id']}", headers=auth(token)
     ).status_code == 200
+
+
+def test_service_chi_co_quyen_catalog_va_phuc_vu(client):
+    ctx = seller_with_shop(client)
+    username, _ = new_staff(client, ctx, "SERVICE")
+
+    session = SessionLocal()
+    try:
+        user = session.query(models.User).filter_by(username=username).one()
+        assert dependencies.effective_staff_role(user) == "SERVICE"
+        assert dependencies.has_staff_permission(
+            user, dependencies.PERMISSION_CATALOG_READ
+        )
+        assert dependencies.has_staff_permission(
+            user, dependencies.PERMISSION_FNB_SERVICE
+        )
+        for denied in (
+            dependencies.PERMISSION_SALE,
+            dependencies.PERMISSION_ORDER_RETURN,
+            dependencies.PERMISSION_RETURN_APPROVE,
+            dependencies.PERMISSION_FNB_CHECKOUT,
+            dependencies.PERMISSION_FNB_MANAGE,
+            dependencies.PERMISSION_INVENTORY,
+            dependencies.PERMISSION_RECONCILIATION,
+        ):
+            assert not dependencies.has_staff_permission(user, denied)
+    finally:
+        session.close()
+
+
+def test_permission_cashier_manager_legacy_va_unknown_fail_closed(client):
+    ctx = seller_with_shop(client)
+    cashier_username, _ = new_staff(client, ctx, "CASHIER")
+    manager_username, _ = new_staff(client, ctx, "MANAGER")
+
+    session = SessionLocal()
+    try:
+        cashier = session.query(models.User).filter_by(username=cashier_username).one()
+        manager = session.query(models.User).filter_by(username=manager_username).one()
+        assert dependencies.has_staff_permission(
+            cashier, dependencies.PERMISSION_ORDER_RETURN
+        )
+        assert not dependencies.has_staff_permission(
+            cashier, dependencies.PERMISSION_RETURN_APPROVE
+        )
+        assert dependencies.has_staff_permission(
+            manager, dependencies.PERMISSION_ORDER_RETURN
+        )
+        assert dependencies.has_staff_permission(
+            manager, dependencies.PERMISSION_RETURN_APPROVE
+        )
+
+        manager.staff_role = None
+        assert dependencies.effective_staff_role(manager) == "MANAGER"
+        assert dependencies.has_staff_permission(
+            manager, dependencies.PERMISSION_ORDER_RETURN
+        )
+        assert dependencies.has_staff_permission(
+            manager, dependencies.PERMISSION_RETURN_APPROVE
+        )
+
+        manager.staff_role = "UNKNOWN"
+        assert not dependencies.has_staff_permission(
+            manager, dependencies.PERMISSION_ORDER_RETURN
+        )
+        assert not dependencies.has_staff_permission(
+            manager, dependencies.PERMISSION_RETURN_APPROVE
+        )
+    finally:
+        session.rollback()
+        session.close()
 
 
 def test_staff_legacy_null_duoc_hieu_la_manager_va_migration_backfill(client):
@@ -103,9 +176,9 @@ def test_login_staff_tra_staff_role_con_seller_khong_them_khoa(client):
     assert set(seller_login.json()) == {"access_token", "token_type", "role"}
 
 
-def test_chu_shop_doi_role_va_vo_hieu_phien_cu(client):
+def test_chu_shop_doi_service_sang_cashier_va_vo_hieu_phien_cu(client):
     ctx = seller_with_shop(client)
-    username, old_token, staff = _staff_record(client, ctx, "MANAGER")
+    username, old_token, staff = _staff_record(client, ctx, "SERVICE")
 
     res = client.put(
         f"/api/staff/member/{staff['id']}/role",

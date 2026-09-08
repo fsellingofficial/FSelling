@@ -12,6 +12,7 @@ from fselling.migration.topology import StaticInventory
 ROOT = Path(__file__).resolve().parents[1]
 R1C = "0011_fnb_checkout_r1c"
 PLAN2 = "0012_fnb_ticket_service_handoff"
+PLAN3 = "0013_roles_returns_approval_r3"
 
 
 def _runner(path, *, fault_hook=None):
@@ -58,7 +59,7 @@ def test_0011_to_0012_adds_nullable_handoff_fields_without_rewriting_ticket(tmp_
     database = tmp_path / "fnb-plan2.db"
     runner = _database_at_r1c(database)
 
-    assert runner.upgrade("head") == [PLAN2]
+    assert runner.upgrade("head") == [PLAN2, PLAN3]
     runner.verify()
 
     with sqlite3.connect(database) as connection:
@@ -104,7 +105,7 @@ def test_0012_upgrade_rolls_back_columns_and_version_on_fault(tmp_path):
             raise RuntimeError("plan2 injected fault")
 
     with pytest.raises(RuntimeError, match="plan2 injected fault"):
-        _runner(database, fault_hook=fail).upgrade("head")
+        _runner(database, fault_hook=fail).upgrade(PLAN2)
 
     with sqlite3.connect(database) as connection:
         columns = {
@@ -135,7 +136,7 @@ def test_0012_upgrade_fails_closed_before_ddl_for_done_out_of_stock(tmp_path):
         connection.commit()
 
     with pytest.raises(RuntimeError, match="FNB_PLAN2_LEGACY_DONE_OUT_OF_STOCK"):
-        runner.upgrade("head")
+        runner.upgrade(PLAN2)
 
     with sqlite3.connect(database) as connection:
         columns = {
@@ -165,8 +166,9 @@ def test_0012_verifier_rejects_done_out_of_stock_legacy_row(tmp_path):
 def test_0012_downgrade_is_explicitly_forward_only(tmp_path):
     database = tmp_path / "fnb-plan2-forward-only.db"
     runner = _database_at_r1c(database)
-    runner.upgrade("head")
-    spec = runner._graph().head
+    runner.upgrade(PLAN2)
+    graph = runner._graph()
+    spec = graph.revisions[graph.index(PLAN2)]
 
     with pytest.raises(RuntimeError, match="FORWARD_ONLY_MIGRATION"):
         spec.module.downgrade()

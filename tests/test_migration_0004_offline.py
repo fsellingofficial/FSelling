@@ -32,6 +32,7 @@ FNB = "0009_fnb_table_service_r1a"
 R1B = "0010_fnb_kitchen_stock_r1b"
 R1C = "0011_fnb_checkout_r1c"
 PLAN2 = "0012_fnb_ticket_service_handoff"
+PLAN3 = "0013_roles_returns_approval_r3"
 LATER_INDEX = "0006_test_later_index"
 
 # Pinned so an edit to a released revision fails here instead of silently
@@ -156,6 +157,7 @@ def _pre_0004_root(tmp_path: Path) -> Path:
     (root / "migrations/versions/0010_fnb_kitchen_stock_r1b.py").unlink()
     (root / "migrations/versions/0011_fnb_checkout_r1c.py").unlink()
     (root / "migrations/versions/0012_fnb_ticket_service_handoff.py").unlink()
+    (root / "migrations/versions/0013_roles_returns_approval_r3.py").unlink()
     manifest_path = root / "migrations/checksums.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     del manifest["revisions"][I09]
@@ -167,6 +169,7 @@ def _pre_0004_root(tmp_path: Path) -> Path:
     del manifest["revisions"][R1B]
     del manifest["revisions"][R1C]
     del manifest["revisions"][PLAN2]
+    del manifest["revisions"][PLAN3]
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
@@ -184,6 +187,7 @@ def _later_index_root(tmp_path: Path) -> Path:
     (root / "migrations/versions/0010_fnb_kitchen_stock_r1b.py").unlink()
     (root / "migrations/versions/0011_fnb_checkout_r1c.py").unlink()
     (root / "migrations/versions/0012_fnb_ticket_service_handoff.py").unlink()
+    (root / "migrations/versions/0013_roles_returns_approval_r3.py").unlink()
     source = f'''from alembic import op
 
 revision = "{LATER_INDEX}"
@@ -223,6 +227,7 @@ def downgrade():
     del manifest["revisions"][R1B]
     del manifest["revisions"][R1C]
     del manifest["revisions"][PLAN2]
+    del manifest["revisions"][PLAN3]
     manifest["revisions"][LATER_INDEX] = {
         "down_revision": I09C,
         "path": f"versions/{LATER_INDEX}.py",
@@ -440,10 +445,10 @@ def test_fresh_root_to_0004_and_restart_verify_are_stable(tmp_path):
     coordinator = _coordinator(database)
 
     assert coordinator.init() == [ROOT]
-    assert coordinator.upgrade("head") == [I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2]
+    assert coordinator.upgrade("head") == [I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
     report = coordinator.verify()
-    assert report.current_revision == report.head_revision == PLAN2
-    assert report.revision_count == 12
+    assert report.current_revision == report.head_revision == PLAN3
+    assert report.revision_count == 13
 
     # Restart is a no-op and verification stays green on the same database.
     assert coordinator.upgrade("head") == []
@@ -487,7 +492,7 @@ def test_released_revisions_and_control_fingerprint_are_untouched():
 def test_0004_is_linear_self_contained_and_checksummed(tmp_path):
     graph = _coordinator(tmp_path / "unused.db")._graph()
     assert [item.revision for item in graph.revisions] == [
-        ROOT, I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2
+        ROOT, I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3
     ]
     spec = next(item for item in graph.revisions if item.revision == I09)
     assert spec.down_revision == I05
@@ -550,7 +555,7 @@ def test_0004_rolls_back_as_one_unit(tmp_path, stage):
         connection.close()
 
     # The same database still upgrades cleanly once the fault is gone.
-    assert _coordinator(database).upgrade("head") == [I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2]
+    assert _coordinator(database).upgrade("head") == [I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
     _coordinator(database).verify()
 
 
@@ -1093,13 +1098,13 @@ def test_version_matrix_is_fail_closed_in_both_directions(tmp_path):
     pending = tmp_path / "new-binary-old-db.db"
     coordinator = _at_i05(pending)
     assert coordinator.check().classification == "MANAGED_PENDING"
-    assert coordinator.check().pending_revisions == (I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2)
+    assert coordinator.check().pending_revisions == (I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3)
     with pytest.raises(RevisionStateError, match="not at the checked-in head"):
         coordinator.verify()
 
     # Cell 2: new binary, database at head -> ready.
-    assert coordinator.upgrade("head") == [I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2]
-    assert coordinator.verify().current_revision == PLAN2
+    assert coordinator.upgrade("head") == [I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
+    assert coordinator.verify().current_revision == PLAN3
 
     # Cell 3: old binary against a 0004 database -> refuses to boot rather than
     # serving a schema it does not know.

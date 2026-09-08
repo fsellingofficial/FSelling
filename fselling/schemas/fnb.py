@@ -106,10 +106,6 @@ class FnbLineCancel(FnbRequest):
     approval_token: Optional[str] = Field(default=None, min_length=32, max_length=256)
 
 
-class FnbManagerPinSet(FnbRequest):
-    pin: str = Field(pattern=r"^\d{4,6}$")
-
-
 class FnbManagerApprovalCreate(FnbRequest):
     shop_id: int
     approver_username: str = Field(min_length=1, max_length=100)

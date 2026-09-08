@@ -210,6 +210,7 @@
         'fnb.setup.changed': 'Sơ đồ vừa thay đổi. Đã tải bản mới; kiểm tra rồi lưu lại.',
         'fnb.auth.feature_disabled': 'Cửa hàng đã tắt bán tại bàn. Bạn được đưa về POS bán tại quầy.',
         'fnb.auth.warehouse': 'Vai trò kho không dùng sơ đồ bàn.',
+        'fnb.auth.service_handoff': 'Khi khách cần thanh toán hoặc hoàn tiền, hãy bàn giao cho thu ngân hoặc quản lý.',
         'fnb.auth.no_access': 'Bạn không có quyền xem sơ đồ bàn này.'
     });
 
@@ -416,6 +417,7 @@
         'fnb.setup.changed': 'The floor just changed. The latest version is loaded; review and save again.',
         'fnb.auth.feature_disabled': 'Table service was disabled for this store. Returning to counter sales.',
         'fnb.auth.warehouse': 'Warehouse staff do not use the table floor.',
+        'fnb.auth.service_handoff': 'Hand off to a cashier or manager when the guest needs payment or a refund.',
         'fnb.auth.no_access': 'You cannot view this table floor.'
     });
 })(window);

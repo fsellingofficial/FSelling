@@ -191,7 +191,7 @@ def test_issue_owner_persists_only_digest_and_heartbeat_has_no_secret(
     assert "lease_token" not in heartbeat.json()
     assert "secret_sha256" not in heartbeat.json()
     assert _TEST_MIGRATIONS.verify().current_revision == (
-        "0012_fnb_ticket_service_handoff"
+        "0013_roles_returns_approval_r3"
     )
 
 

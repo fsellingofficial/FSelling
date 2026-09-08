@@ -81,12 +81,22 @@
         let pendingPromise = null;
         const canManageSetup = deps.role === 'SELLER'
             || (deps.role === 'STAFF' && deps.staffRole === 'MANAGER');
+        const capabilities = Object.freeze({
+            service: deps.role === 'SELLER'
+                || (deps.role === 'STAFF'
+                    && ['SERVICE', 'CASHIER', 'MANAGER'].includes(deps.staffRole)),
+            checkout: deps.role === 'SELLER'
+                || (deps.role === 'STAFF'
+                    && ['CASHIER', 'MANAGER'].includes(deps.staffRole)),
+            setup: canManageSetup,
+        });
         const pollDelay = () => deps.isHidden?.() ? 10_000 : 2_000;
         const uuid = () => deps.uuid?.()
             || global?.crypto?.randomUUID?.()
             || `fnb-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
         deps.render({ type: 'setup-access', allowed: canManageSetup });
+        deps.render({ type: 'role-access', capabilities });
 
         function findTable(tableId, source = state.floor) {
             for (const area of source.areas || []) {
@@ -767,7 +777,7 @@
             'fnbProductSearch', 'fnbCategoryTabs', 'fnbProductGrid', 'fnbDraftLines', 'fnbSentLines', 'fnbSubtotal',
             'fnbServiceTickets',
             'fnbVariantDialog', 'fnbVariantTitle', 'fnbVariantHint', 'fnbVariantList',
-            'fnbConflict', 'fnbSessionStatus', 'fnbTableActions', 'fnbTargetTable',
+            'fnbConflict', 'fnbSessionStatus', 'fnbTableActions', 'fnbTargetTable', 'fnbMergeTable',
             'fnbCancelSession', 'fnbSend', 'fnbStationList', 'fnbPinForm', 'fnbManagerPin',
             'fnbApprovalDialog', 'fnbApprovalForm', 'fnbApproverUsername', 'fnbApprovalPin',
             'fnbCancelResolution', 'fnbCancelReason', 'fnbApprovalStatus',
@@ -779,7 +789,7 @@
             'fnbCashTenderedHelp', 'fnbCashTenderedError', 'fnbCustomerField',
             'fnbCustomer', 'fnbVoucherCode', 'fnbLoyaltyPoints', 'fnbPayButton',
             'fnbPrintProvisional', 'fnbClosePaidSession', 'fnbCheckoutHint',
-            'fnbReceiptPrint'
+            'fnbReceiptPrint', 'fnbRoleHandoff'
         ].map(id => [id, document.getElementById(id)]));
         let shops = [];
         let products = [];
@@ -788,6 +798,7 @@
         let selectedCategoryId = null;
         let lastTableTrigger = null;
         let setupAllowed = false;
+        let roleCapabilities = { service: true, checkout: true, setup: false };
         let pendingCancelLineId = null;
         let pendingCancelSessionRevision = null;
         let approvalDialogGeneration = 0;
@@ -1041,7 +1052,7 @@
                 : `<p>${escapeHtml(t('fnb.sent.empty'))}</p>`;
             renderServiceTickets(value);
             elements.fnbSubtotal.textContent = t('fnb.session.total', { amount: money(value.subtotal_vnd) });
-            elements.fnbTableActions.hidden = !setupAllowed;
+            elements.fnbTableActions.hidden = !roleCapabilities.service;
             elements.fnbCancelSession.disabled = Number(value.subtotal_vnd || 0) > 0;
             elements.fnbSend.disabled = Number(value.unsent_quantity || 0) <= 0 || Boolean(pending);
             const sentQuantity = buckets.sent.reduce((sum, line) => sum + Number(line.active_sent_quantity || 0), 0);
@@ -1159,6 +1170,14 @@
             if (event.type === 'setup-access') {
                 setupAllowed = event.allowed;
                 elements.fnbSetupOpen.hidden = !(setupAllowed && shops.length);
+            } else if (event.type === 'role-access') {
+                roleCapabilities = event.capabilities;
+                elements.fnbCheckoutOpen.hidden = !roleCapabilities.checkout;
+                elements.fnbPinForm.hidden = !roleCapabilities.setup;
+                elements.fnbMergeTable.hidden = !roleCapabilities.setup;
+                elements.fnbRoleHandoff.hidden = roleCapabilities.checkout;
+                elements.fnbRoleHandoff.textContent = roleCapabilities.checkout
+                    ? '' : t('fnb.auth.service_handoff');
             } else if (event.type === 'loading') {
                 skeletons();
             } else if (event.type === 'floor') {
@@ -1403,7 +1422,9 @@
             } else if (action === 'open-table') {
                 lastTableTrigger = button;
                 sessionStatus(t('fnb.session.loading'));
-                controller.openTable(id).then(() => controller.loadChecks()).catch(error => sessionStatus(error.message));
+                controller.openTable(id)
+                    .then(() => roleCapabilities.checkout ? controller.loadChecks() : undefined)
+                    .catch(error => sessionStatus(error.message));
             } else if (action === 'select-check') {
                 selectCheck(id);
                 renderChecks(controller.getState().checks);
@@ -1499,7 +1520,7 @@
         elements.fnbShopSelect.addEventListener('change', event => chooseShop(Number(event.target.value)));
         elements.fnbCancelSession.addEventListener('click', () => controller.cancelSession().catch(error => sessionStatus(error.message)));
         elements.fnbSend.addEventListener('click', () => controller.sendSession()
-            .then(() => controller.loadChecks())
+            .then(() => roleCapabilities.checkout ? controller.loadChecks() : undefined)
             .then(() => showToast(t('fnb.send.done')))
             .catch(error => sessionStatus(error.message)));
         elements.fnbCheckoutOpen.addEventListener('click', async () => {

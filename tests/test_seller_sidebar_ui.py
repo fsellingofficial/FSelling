@@ -58,3 +58,33 @@ def test_nhan_sidebar_song_ngu_va_asset_duoc_bump_cache():
     assert f"/css/seller.css?v={css_version}" in html
     assert f"/js/locales/seller.js?v={version}" in html
     assert f"/js/seller.js?v={version}" in html
+
+
+def test_service_role_and_shared_return_pin_are_wired_without_seller_admin_access():
+    html = _read("static/seller.html")
+    js = _read("static/js/seller.js")
+    locale = _read("static/js/locales/seller.js")
+    fnb_js = _read("static/js/fnb-r1a.js")
+
+    assert html.count('value="SERVICE"') >= 1
+    assert "selectedRole === 'SERVICE'" in js
+    assert "SERVICE: new Set()" in js
+    assert html.count("roles-return=20260908-r3") == 3
+    assert 'id="returnApprovalSettings"' in html
+    assert 'id="returnManagerPin"' in html
+    assert "`/shops/${shopId}/manager-pin`" in js
+    assert "`/fnb/shops/${Number(elements.fnbShopSelect.value)}/manager-pin`" in fnb_js
+    for key in (
+        "seller.staff.role_service_help",
+        "seller.staff.role_cashier_help",
+        "seller.staff.role_warehouse_help",
+        "seller.staff.role_kitchen_help",
+        "seller.staff.role_bar_help",
+        "seller.staff.role_manager_help",
+        "seller.return_pin.title",
+    ):
+        assert locale.count(f"'{key}'") == 2
+
+
+def test_auth_asset_cache_key_includes_plan3_role_routing():
+    assert "roles-return=20260908-r3" in _read("static/index.html")

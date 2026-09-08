@@ -8,6 +8,8 @@ Ba việc rất dễ nhầm với nhau, bộ test này phải giữ được ran
 """
 import uuid
 
+import pytest
+
 from conftest import _unique, auth, new_seller, new_staff, seller_with_shop
 
 from fselling import models
@@ -100,7 +102,15 @@ def _tra(client, ctx, order_id, items, method="transfer", token=None, **kw):
     """Mặc định hoàn bằng CHUYỂN KHOẢN: hoàn tiền mặt bắt buộc phải có ca đang
     mở (tiền ra khỏi két phải thuộc về một ca), nên các test không nhắm vào
     chuyện két thì dùng chuyển khoản cho khỏi lệ thuộc."""
-    body = {"items": items, "method": method, "operation_id": _op()}
+    explicit_items = [{**item, "restock": item.get("restock", True)} for item in items]
+    body = {
+        "items": explicit_items,
+        "method": method,
+        "reason": "Khách trả hàng",
+        "operation_id": _op(),
+    }
+    if method == "transfer":
+        body["reference"] = "TEST-RETURN"
     body.update(kw)
     return client.post(
         f"/api/orders/{order_id}/returns",
@@ -174,6 +184,8 @@ def test_product_id_shop_khac_409_truoc_tien_diem_provenance_va_ton_kho(client):
             "operation_id": operation_id,
             "items": [{"order_item_id": dong["id"], "quantity": 1, "restock": False}],
             "method": "transfer",
+            "reason": "Hàng hỏng",
+            "reference": "TEST-RETURN",
         }
         accepted = client.post(
             f"/api/orders/{order_id}/returns",
@@ -243,6 +255,8 @@ def test_product_bi_xoa_chi_chan_restock_con_hang_hong_van_hoan_tien(client):
         "operation_id": operation_id,
         "items": [{"order_item_id": dong["id"], "quantity": 1, "restock": False}],
         "method": "transfer",
+        "reason": "Hàng hỏng",
+        "reference": "TEST-RETURN",
     }
     accepted = client.post(
         f"/api/orders/{order_id}/returns", headers=auth(ctx["token"]), json=body
@@ -652,8 +666,10 @@ def test_bam_hai_lan_cung_ma_thao_tac_chi_tao_mot_phieu(client):
 
     ma = _op()
     body = {
-        "items": [{"order_item_id": dong["id"], "quantity": 1}],
+        "items": [{"order_item_id": dong["id"], "quantity": 1, "restock": True}],
         "method": "transfer",
+        "reason": "Khách trả hàng",
+        "reference": "TEST-RETURN",
         "operation_id": ma,
     }
     lan_mot = client.post(
@@ -688,6 +704,7 @@ def test_cung_ma_nhung_doi_noi_dung_tra_hang_bi_tu_choi(client):
             ],
             "method": "transfer",
             "reason": "Khách đổi ý",
+            "reference": "TEST-RETURN",
             "operation_id": ma,
         },
         headers=auth(ctx["token"]),
@@ -726,8 +743,10 @@ def test_cung_ma_thao_tac_cho_don_khac_bi_tu_choi(client):
     client.post(
         f"/api/orders/{don_a}/returns",
         json={
-            "items": [{"order_item_id": dong_a["id"], "quantity": 1}],
+            "items": [{"order_item_id": dong_a["id"], "quantity": 1, "restock": True}],
             "method": "transfer",
+            "reason": "Khách trả hàng",
+            "reference": "TEST-RETURN",
             "operation_id": ma,
         },
         headers=auth(ctx["token"]),
@@ -735,8 +754,10 @@ def test_cung_ma_thao_tac_cho_don_khac_bi_tu_choi(client):
     res = client.post(
         f"/api/orders/{don_b}/returns",
         json={
-            "items": [{"order_item_id": dong_b["id"], "quantity": 1}],
+            "items": [{"order_item_id": dong_b["id"], "quantity": 1, "restock": True}],
             "method": "transfer",
+            "reason": "Khách trả hàng",
+            "reference": "TEST-RETURN",
             "operation_id": ma,
         },
         headers=auth(ctx["token"]),
@@ -811,7 +832,7 @@ def test_hoan_chuyen_khoan_khong_dung_toi_ket(client):
         [{"order_item_id": dong["id"], "quantity": 1}],
         method="transfer",
         reference="FT123456",
-        token=thu_ngan,
+        token=ctx["token"],
     )
     assert res.status_code == 200, res.text
 
@@ -884,16 +905,18 @@ def test_thu_ngan_nhan_tra_hang_duoc(client):
         ctx,
         order_id,
         [{"order_item_id": dong["id"], "quantity": 1}],
+        method="cash",
         token=thu_ngan,
     )
     assert res.status_code == 200, res.text
 
 
-def test_nhan_vien_kho_khong_nhan_tra_hang_duoc(client):
+@pytest.mark.parametrize("staff_role", ["SERVICE", "WAREHOUSE", "KITCHEN", "BAR"])
+def test_role_khong_co_permission_nhan_tra_hang_bi_tu_choi(client, staff_role):
     ctx = seller_with_shop(client)
     sp = _tao_sp(client, ctx, gia_ban=50000, ton=10, gia_von=30000)
     order_id = _ban(client, ctx, [(sp, 2)])
-    _, nv_kho = new_staff(client, ctx, staff_role="WAREHOUSE")
+    _, token = new_staff(client, ctx, staff_role=staff_role)
     dong = _dong_don(client, ctx, order_id, sp["id"])
 
     res = _tra(
@@ -901,7 +924,7 @@ def test_nhan_vien_kho_khong_nhan_tra_hang_duoc(client):
         ctx,
         order_id,
         [{"order_item_id": dong["id"], "quantity": 1}],
-        token=nv_kho,
+        token=token,
     )
     assert res.status_code == 403
 
@@ -1079,7 +1102,8 @@ def test_thieu_cach_hoan_tien_bi_tu_choi(client):
     res = client.post(
         f"/api/orders/{order_id}/returns",
         json={
-            "items": [{"order_item_id": dong["id"], "quantity": 1}],
+            "items": [{"order_item_id": dong["id"], "quantity": 1, "restock": True}],
+            "reason": "Khách trả hàng",
             "operation_id": _op(),
         },
         headers=auth(ctx["token"]),

@@ -501,6 +501,8 @@ def test_dao_thu_tu_payload_khong_doi_ket_qua_tra_hang_tung_phan(client):
                     {"order_item_id": dong_200_id, "quantity": 1, "restock": True}
                 ],
                 "method": "transfer",
+                "reason": "Kiểm thử hoàn offline",
+                "reference": "TEST-RETURN",
                 "operation_id": "off-return-" + _uuid.uuid4().hex,
             },
             headers=auth(ctx["token"]),
@@ -1063,6 +1065,8 @@ def test_tracked_ton_am_evidence_restart_stocktake_aba_return_cancel(client):
                 }
             ],
             "method": "transfer",
+            "reason": "Kiểm thử hoàn offline",
+            "reference": "TEST-RETURN",
             "operation_id": "offline-open-missing-source-" + _uuid.uuid4().hex,
         },
         headers=auth(ctx["token"]),
@@ -1257,6 +1261,8 @@ def test_tracked_ton_am_evidence_restart_stocktake_aba_return_cancel(client):
                     }
                 ],
                 "method": "transfer",
+                "reason": "Kiểm thử hoàn offline",
+                "reference": "TEST-RETURN",
                 "operation_id": "offline-missing-source-" + _uuid.uuid4().hex,
             },
             headers=auth(ctx["token"]),
@@ -1279,6 +1285,8 @@ def test_tracked_ton_am_evidence_restart_stocktake_aba_return_cancel(client):
                 },
             ],
             "method": "transfer",
+            "reason": "Kiểm thử hoàn offline",
+            "reference": "TEST-RETURN",
             "operation_id": "offline-multiline-missing-source-"
             + _uuid.uuid4().hex,
         },
