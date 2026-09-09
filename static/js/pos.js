@@ -4569,6 +4569,7 @@ async function guiPhieuTraHangDangDo() {
                 dich('pos.return.unknown_result');
             document.getElementById('btnRetryReturn').hidden = false;
         } else {
+            if (returnEnvelope) returnEnvelope.state = 'editing';
             showToast(e.message);
         }
     } finally {

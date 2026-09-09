@@ -77,4 +77,45 @@ assert.equal(context.payload().operation_id, 'operation-1', 'network retry reuse
 context.succeeded();
 assert.equal(context.state(), null);
 
-console.log('pos-return-r3.test.js: PASS');
+const elements = new Map();
+const failedContext = {
+    taoOperationId: () => 'failed-operation',
+    datNutDangXuLy: () => {},
+    apiCall: async () => {
+        throw { status: 400, message: 'known failure' };
+    },
+    showToast: () => {},
+    document: {
+        getElementById: id => {
+            if (!elements.has(id)) {
+                elements.set(id, { hidden: false, innerText: '', value: '' });
+            }
+            return elements.get(id);
+        }
+    }
+};
+vm.createContext(failedContext);
+const submitEnd = source.indexOf('function moDuyetTraHang(context)');
+vm.runInContext(`${source.slice(start, submitEnd)};
+    donDangTra = { id: 1 };
+    this.begin = returnR3Begin;
+    this.edit = returnR3Edit;
+    this.payload = returnR3Payload;
+    this.submit = guiPhieuTraHangDangDo;
+    this.state = returnR3State;
+`, failedContext);
+
+(async () => {
+    failedContext.begin(draft);
+    await failedContext.submit();
+    assert.equal(failedContext.state().state, 'editing');
+    failedContext.edit({
+        ...draft,
+        items: [{ order_item_id: 42, quantity: 2, restock: false }]
+    });
+    assert.equal(failedContext.payload().items[0].quantity, 2);
+    console.log('pos-return-r3.test.js: PASS');
+})().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});

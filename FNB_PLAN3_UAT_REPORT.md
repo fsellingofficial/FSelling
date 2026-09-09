@@ -166,6 +166,11 @@ Environment:
   backend returned `Lần trả hàng này đã được ghi nhận trước đó`; both captured
   requests had the same operation ID and payload quantity, while the durable
   return count remained one (`PASS`).
+- `TEST_GAP`: this browser evidence used a temporary harness that loaded the
+  production return controller but supplied its own fetch/proxy wrapper. It
+  proves real transport loss, backend durability and idempotent replay; it does
+  not prove the complete production POS form, `apiCall`,
+  `guiPhieuTraHangDangDo` and `thuLaiPhieuTraHang` path end to end.
 
 ### 8. Owner activity view
 
@@ -179,6 +184,11 @@ The owner opened `Nhật ký hoạt động` and saw:
 
 ### 9. Independent-review corrections
 
+- Local in-app browser harness executed the production
+  `guiPhieuTraHangDangDo` controller with a known HTTP 400 response. The
+  controller returned to `editing`; changing quantity `1 -> 2` then updated the
+  draft while preserving operation ID `uat-known-error-001` (`PASS`). This
+  isolates controller recovery and does not claim the complete POS form path.
 - Local browser harness: an invalid/expired approval response cleared the token,
   returned the controller to `approval-required`, cleared PIN and reopened the
   existing approval dialog (`PASS`).
@@ -209,6 +219,6 @@ the Plan 3 worktree must not overwrite them wholesale.
 ## Limitations
 
 - Full suite: owner-run `test-commit.ps1 -TestOnly` exited `0` after the latest
-  review corrections on 2026-09-09 (2,566.9 seconds).
+  known-error recovery correction on 2026-09-09 (3,871.5 seconds).
 - Payment provider, deployment and production migration behavior: `UNKNOWN-PROD`.
 - Browser-generated operation UUIDs are not exposed by public UI/API evidence.
