@@ -4248,7 +4248,7 @@ function returnR3Begin(draft) {
 
 function returnR3Edit(draft) {
     if (!returnEnvelope) return null;
-    if (returnEnvelope.state === 'unknown') return returnEnvelope;
+    if (['submitting', 'unknown'].includes(returnEnvelope.state)) return returnEnvelope;
     returnEnvelope.draft = JSON.parse(JSON.stringify(draft));
     returnEnvelope.approvalToken = null;
     returnEnvelope.state = 'editing';

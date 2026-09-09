@@ -36,8 +36,21 @@ context.begin(draft);
 assert.equal(context.state().state, 'submitting');
 assert.equal(context.payload().operation_id, 'operation-1');
 
+context.edit({
+    ...draft,
+    items: [{ order_item_id: 42, quantity: 2, restock: false }]
+});
+assert.equal(context.state().state, 'submitting');
+assert.equal(context.payload().items[0].quantity, 1);
+assert.equal(context.payload().operation_id, 'operation-1');
+
 context.approvalRequired();
 assert.equal(context.state().state, 'approval-required');
+context.edit({ ...draft, reason: 'Lý do mới' });
+assert.equal(context.state().approvalToken, null);
+assert.equal(context.state().state, 'editing');
+assert.equal(context.payload().operation_id, 'operation-1');
+
 context.approved('a'.repeat(43));
 assert.equal(context.payload().approval_token, 'a'.repeat(43));
 assert.equal(context.payload().operation_id, 'operation-1');
@@ -46,12 +59,6 @@ assert.equal(typeof context.approvalInvalid, 'function');
 context.approvalInvalid();
 assert.equal(context.state().state, 'approval-required');
 assert.equal(context.payload().approval_token, undefined);
-assert.equal(context.payload().operation_id, 'operation-1');
-
-context.approved('a'.repeat(43));
-context.edit({ ...draft, reason: 'Lý do mới' });
-assert.equal(context.state().approvalToken, null);
-assert.equal(context.state().state, 'editing');
 assert.equal(context.payload().operation_id, 'operation-1');
 
 context.begin(context.state().draft);

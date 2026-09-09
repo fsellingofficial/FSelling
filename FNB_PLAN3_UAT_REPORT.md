@@ -157,13 +157,15 @@ Environment:
 
 ### 7. Delayed/lost response
 
-- Post-review local browser harness loaded the return controller directly from
-  `static/js/pos.js`. After an unknown outcome, editing the visible form kept
-  the original draft and `uat-operation-1`; clicking retry sent that exact
-  payload and operation ID (`PASS`).
-- `TEST_GAP`: a real transport response loss against the full local backend was
-  not induced. The browser observation above verifies controller recovery, not
-  network infrastructure.
+- An in-app browser submitted through a local response-dropping proxy to the
+  real FastAPI return endpoint backed by an isolated temporary database. The
+  proxy closed the socket only after the backend committed: the browser saw
+  `TypeError: Failed to fetch`, controller state became `unknown`, and the
+  database already contained exactly one durable return (`PASS`).
+- Browser retry sent `uat-real-response-loss-001` and quantity `1` again. The
+  backend returned `Lần trả hàng này đã được ghi nhận trước đó`; both captured
+  requests had the same operation ID and payload quantity, while the durable
+  return count remained one (`PASS`).
 
 ### 8. Owner activity view
 
@@ -184,9 +186,10 @@ The owner opened `Nhật ký hoạt động` and saw:
   echo Pydantic `input`; stale approved quantity races return
   `409 RETURN_CONTEXT_CHANGED`; wrong token/actor/shop/order/action and expiry
   return non-enumerating invalid-approval errors without side effects.
-- Atomic rollback evidence now reaches approval consumption, cashier cash-shift
-  lookup, loyalty mutation and batch provenance CAS before an injected audit
-  failure, then compares the complete persisted state unchanged.
+- Atomic rollback coverage injects failure after approval selection, return
+  flush, loyalty entry, first batch/provenance update, payment add, audit add
+  and immediately before commit. Every case compares approval, return/payment,
+  cash shift, stock/batch/cost, loyalty and audit state unchanged.
 
 ## Primary-checkout reconciliation warning
 
@@ -205,7 +208,7 @@ the Plan 3 worktree must not overwrite them wholesale.
 
 ## Limitations
 
-- Full suite: owner-run `test-commit.ps1 -TestOnly` exited `0` after the
-  independent-review fixes on 2026-09-09 (2,545.9 seconds).
+- Full suite: owner-run `test-commit.ps1 -TestOnly` exited `0` after the latest
+  review corrections on 2026-09-09 (2,566.9 seconds).
 - Payment provider, deployment and production migration behavior: `UNKNOWN-PROD`.
 - Browser-generated operation UUIDs are not exposed by public UI/API evidence.

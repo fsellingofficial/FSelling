@@ -57,6 +57,34 @@ def _set_payment_method(order_id, method):
         session.close()
 
 
+def _return_transaction_state(order_id, line_id, product_id, token, shift_id):
+    state = _return_atomic_state(order_id, line_id, product_id)
+    session = SessionLocal()
+    try:
+        approval = session.query(models.FnbManagerApproval).filter_by(
+            token_hash=hashlib.sha256(token.encode()).hexdigest()
+        ).one()
+        shift = session.get(models.CashShift, shift_id)
+        return {
+            **state,
+            "approval_used_at": approval.used_at,
+            "shift": (
+                shift.status,
+                shift.opening_cash_amount,
+                shift.counted_cash_amount,
+                shift.expected_cash_amount,
+                shift.variance_amount,
+                shift.closed_by_user_id,
+                shift.closed_at,
+            ),
+            "return_logs": session.query(models.SystemLog).filter_by(
+                action="ORDER_RETURN"
+            ).count(),
+        }
+    finally:
+        session.close()
+
+
 def test_return_schema_requires_explicit_condition_and_service_requires_reason(client):
     ctx = seller_with_shop(client)
     product = _tao_sp(client, ctx, gia_ban=50_000, ton=2, gia_von=30_000)
@@ -702,7 +730,21 @@ def test_failure_before_commit_rolls_back_approval_money_inventory_and_counters(
     assert retry.status_code == 200, retry.text
 
 
-def test_cash_loyalty_batch_return_failure_rolls_back_with_approval(client, monkeypatch):
+@pytest.mark.parametrize(
+    "fault_boundary",
+    [
+        "approval_selection",
+        "return_flush",
+        "loyalty_entry",
+        "batch_update",
+        "payment_add",
+        "audit_add",
+        "before_commit",
+    ],
+)
+def test_each_plan3_mutation_boundary_rolls_back_the_complete_return(
+    client, monkeypatch, fault_boundary
+):
     ctx = seller_with_shop(client)
     created = client.post(
         "/api/products",
@@ -766,45 +808,77 @@ def test_cash_loyalty_batch_return_failure_rolls_back_with_approval(client, monk
     token = _approve(
         client, ctx, cashier_token, cashier_username, order_id, draft
     ).json()["approval_token"]
-    before = _return_atomic_state(order_id, line["id"], product["id"])
-    session = SessionLocal()
-    try:
-        before_logs = session.query(models.SystemLog).filter_by(
-            action="ORDER_RETURN"
-        ).count()
-        shift = session.get(models.CashShift, shift_id)
-        before_shift = (shift.status, shift.opening_cash_amount)
-    finally:
-        session.close()
+    before = _return_transaction_state(
+        order_id, line["id"], product["id"], token, shift_id
+    )
 
-    calls = {"shift": 0, "loyalty": 0, "batch": 0}
-    real_shift = order_service._current_cash_shift
+    hit = []
+    real_add = return_service.Session.add
+    real_flush = return_service.Session.flush
+    real_commit = return_service.Session.commit
     real_loyalty = loyalty_service.add_entry
     real_batch = return_service._conditional_advance_batch_return
+    real_audit = order_service._them_nhat_ky
 
-    def traced_shift(*args, **kwargs):
-        calls["shift"] += 1
-        return real_shift(*args, **kwargs)
+    def fail():
+        hit.append(fault_boundary)
+        raise HTTPException(status_code=503, detail=f"injected {fault_boundary}")
 
-    def traced_loyalty(*args, **kwargs):
-        calls["loyalty"] += 1
-        return real_loyalty(*args, **kwargs)
+    def faulting_add(session, instance, *args, **kwargs):
+        result = real_add(session, instance, *args, **kwargs)
+        if fault_boundary == "approval_selection" and isinstance(
+            instance, models.OrderReturn
+        ):
+            fail()
+        if fault_boundary == "payment_add" and isinstance(
+            instance, models.OrderPayment
+        ) and instance.entry_type in {"RETURN_CASH", "RETURN_TRANSFER"}:
+            fail()
+        return result
 
-    def traced_batch(*args, **kwargs):
-        calls["batch"] += 1
-        return real_batch(*args, **kwargs)
+    def faulting_flush(session, *args, **kwargs):
+        return_pending = any(
+            isinstance(row, models.OrderReturn) for row in session.new
+        )
+        result = real_flush(session, *args, **kwargs)
+        if fault_boundary == "return_flush" and return_pending:
+            fail()
+        return result
+
+    def faulting_loyalty(*args, **kwargs):
+        result = real_loyalty(*args, **kwargs)
+        if fault_boundary == "loyalty_entry":
+            fail()
+        return result
+
+    def faulting_batch(*args, **kwargs):
+        result = real_batch(*args, **kwargs)
+        if fault_boundary == "batch_update":
+            fail()
+        return result
+
+    def faulting_audit(*args, **kwargs):
+        result = real_audit(*args, **kwargs)
+        if fault_boundary == "audit_add":
+            fail()
+        return result
+
+    def faulting_commit(session, *args, **kwargs):
+        if fault_boundary == "before_commit" and any(
+            isinstance(row, models.OrderReturn) for row in session.identity_map.values()
+        ):
+            fail()
+        return real_commit(session, *args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(order_service, "_current_cash_shift", traced_shift)
-        patch.setattr(loyalty_service, "add_entry", traced_loyalty)
-        patch.setattr(return_service, "_conditional_advance_batch_return", traced_batch)
+        patch.setattr(return_service.Session, "add", faulting_add)
+        patch.setattr(return_service.Session, "flush", faulting_flush)
+        patch.setattr(return_service.Session, "commit", faulting_commit)
+        patch.setattr(loyalty_service, "add_entry", faulting_loyalty)
         patch.setattr(
-            order_service,
-            "_them_nhat_ky",
-            lambda *_args, **_kw: (_ for _ in ()).throw(
-                HTTPException(status_code=503, detail="injected before commit")
-            ),
+            return_service, "_conditional_advance_batch_return", faulting_batch
         )
+        patch.setattr(order_service, "_them_nhat_ky", faulting_audit)
         failed = client.post(
             f"/api/orders/{order_id}/returns",
             json={**draft.model_dump(), "approval_token": token},
@@ -812,21 +886,10 @@ def test_cash_loyalty_batch_return_failure_rolls_back_with_approval(client, monk
         )
 
     assert failed.status_code == 503
-    assert calls == {"shift": 1, "loyalty": 1, "batch": 1}
-    assert _return_atomic_state(order_id, line["id"], product["id"]) == before
-    session = SessionLocal()
-    try:
-        approval = session.query(models.FnbManagerApproval).filter_by(
-            token_hash=hashlib.sha256(token.encode()).hexdigest()
-        ).one()
-        shift = session.get(models.CashShift, shift_id)
-        assert approval.used_at is None
-        assert (shift.status, shift.opening_cash_amount) == before_shift
-        assert session.query(models.SystemLog).filter_by(
-            action="ORDER_RETURN"
-        ).count() == before_logs
-    finally:
-        session.close()
+    assert hit == [fault_boundary]
+    assert _return_transaction_state(
+        order_id, line["id"], product["id"], token, shift_id
+    ) == before
 
 
 def test_ordinary_return_ignores_supplied_token_and_creates_no_approval(client):
