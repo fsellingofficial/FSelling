@@ -85,7 +85,7 @@ def test_login_tra_dung_contract(client):
     res = client.post("/api/auth/login", json={"username": username, "password": SELLER_PASSWORD})
     assert res.status_code == 200
     body = res.json()
-    assert set(body.keys()) == {"access_token", "token_type", "role"}
+    assert set(body.keys()) == {"access_token", "token_type", "role", "session"}
     assert body["token_type"] == "bearer"
     assert body["role"] == "SELLER"
 
@@ -107,15 +107,13 @@ def test_token_qua_query_string_khong_duoc_chap_nhan(client):
     assert res.status_code == 401
 
 
-def test_single_session_dang_nhap_moi_vo_hieu_token_cu(client):
+def test_login_legacy_khong_vo_hieu_phien_thiet_bi_khac(client):
     username, token_cu = new_seller(client)
     assert client.get("/api/auth/session-check", headers=auth(token_cu)).status_code == 200
 
     token_moi = login(client, username)
     assert client.get("/api/auth/session-check", headers=auth(token_moi)).status_code == 200
-    res = client.get("/api/auth/session-check", headers=auth(token_cu))
-    assert res.status_code == 401
-    assert "thiết bị khác" in res.json()["detail"]
+    assert client.get("/api/auth/session-check", headers=auth(token_cu)).status_code == 200
 
 
 def test_doi_mat_khau_vo_hieu_token_cu_va_tra_token_moi(client):
@@ -127,7 +125,7 @@ def test_doi_mat_khau_vo_hieu_token_cu_va_tra_token_moi(client):
     )
     assert res.status_code == 200
     body = res.json()
-    assert set(body.keys()) == {"access_token", "token_type", "role"}
+    assert set(body.keys()) == {"access_token", "token_type", "role", "session"}
 
     # token cũ mất hiệu lực, token mới dùng được
     assert client.get("/api/auth/session-check", headers=auth(token)).status_code == 401

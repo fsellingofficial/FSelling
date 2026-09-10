@@ -226,15 +226,9 @@ async function apiCall(endpoint, method = 'GET', body = null) {
     try {
         res = await fetch(`${BASE_URL}${endpoint}`, options);
     } catch (error) {
-        throw new Error(t('common.network_error'));
-    }
-    if (res.status === 401 && !endpoint.includes('/auth/login')) {
-        // Chỉ xóa localStorage nếu token hiện tại trong localStorage trùng với token cũ của tab này
-        if (localStorage.getItem('token') === cachedToken) {
-            await clearAuthState();
-        }
-        redirectToLogin();
-        return;
+        const networkError = new Error(t('common.network_error'));
+        markMutationOutcomeUnknown(networkError, method, body);
+        throw networkError;
     }
     
     if (res.headers.get('Content-Disposition')) {
@@ -249,6 +243,20 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         const parseError = new Error(t('common.api_error'));
         parseError.status = res.status;
         throw parseError;
+    }
+    if (res.status === 401 && !endpoint.includes('/auth/login')) {
+        let message = typeof data?.detail?.message === 'string'
+            ? data.detail.message
+            : t('common.api_error');
+        const error = new Error(message);
+        error.status = 401;
+        error.detail = data?.detail || null;
+        error.code = typeof data?.detail?.code === 'string' ? data.detail.code : null;
+        markMutationOutcomeUnknown(error, method, body);
+        if (error.mutationOutcomeUnknown) nhanSangTrangSau(error.message);
+        if (localStorage.getItem('token') === cachedToken) await clearAuthState();
+        redirectToLogin();
+        throw error;
     }
     if (!res.ok) {
         let msg = data?.detail || t('common.api_error');
@@ -268,6 +276,17 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         throw error;
     }
     return data;
+}
+
+function markMutationOutcomeUnknown(error, method, body) {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(String(method).toUpperCase())) return error;
+    error.mutationOutcomeUnknown = true;
+    error.operationId = body?.operation_id || null;
+    // Chỉ giữ draft có operation ID để retry. Body đăng nhập/PIN/mật khẩu
+    // không được gắn vào Error rồi vô tình lọt vào logger của caller.
+    error.draft = error.operationId ? body : null;
+    error.message = `${error.message} ${t('common.session.mutation_unknown')}`;
+    return error;
 }
 
 function showToast(msg) {
@@ -319,8 +338,14 @@ if (document.readyState === 'loading') {
 }
 
 async function logout() {
-    await clearAuthState();
-    redirectToLogin();
+    try {
+        if (getToken()) await apiCall('/auth/logout', 'POST');
+    } catch (error) {
+        // Đăng xuất cục bộ vẫn phải hoàn tất khi máy chủ không phản hồi.
+    } finally {
+        await clearAuthState();
+        redirectToLogin();
+    }
 }
 
 // Tự động phát hiện khi đăng nhập ở tab khác trên cùng trình duyệt (Lập tức logout tab cũ)
@@ -355,4 +380,4 @@ setInterval(async () => {
             // Lỗi mạng tạm thời, bỏ qua để tránh logout nhầm
         }
     }
-}, 3000); // Kiểm tra mỗi 3 giây để đảm bảo phản hồi gần như tức thì
+}, 15000);

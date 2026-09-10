@@ -36,7 +36,7 @@ from ..dependencies import (
     require_staff_permission,
 )
 from ..schemas.catalog import CategoryUpdate
-from . import inventory_service
+from . import auth_session_service, inventory_service
 from .log_service import log_system_action
 from .offline_fingerprint import canonical_time_text
 
@@ -576,6 +576,7 @@ def create_product(
         require_cost_visibility(shop, current_user)
         cost_price = _kiem_gia_von(cost_price)
 
+    auth_session_service.fence_live_auth_session(db)
     resolved_category_id = _resolve_create_category_id(db, shop_id, category_id)
 
     # Khai biến thể thì `name` trở thành tên NHÓM và tên lưu vào DB là tên ghép.
@@ -870,6 +871,7 @@ def update_product(
         raise HTTPException(status_code=404, detail=tr("Sản phẩm không tồn tại"))
     shop = require_shop_access(db, prod.shop_id, current_user)
     require_staff_permission(current_user, PERMISSION_INVENTORY)
+    auth_session_service.fence_live_auth_session(db)
     try:
         price = exact_vnd(price)
     except ExactMoneyError:

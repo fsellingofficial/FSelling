@@ -29,6 +29,9 @@ class OfflineLease(Base):
     revoked_at = Column(String(26), nullable=True)
     revoke_reason = Column(String, nullable=True)
     revoked_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    issued_by_auth_session_id = Column(
+        String(128), ForeignKey("auth_sessions.session_id"), nullable=True
+    )
 
 
 class OfflineReceiptRegistry(Base):

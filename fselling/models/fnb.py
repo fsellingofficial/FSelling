@@ -122,6 +122,9 @@ class FnbActionLog(Base):
         Integer, ForeignKey("fnb_service_sessions.id"), nullable=True, index=True
     )
     actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    auth_session_id = Column(
+        String(128), ForeignKey("auth_sessions.session_id"), nullable=True
+    )
     action = Column(String(64), nullable=False)
     operation_id = Column(String(128), nullable=False)
     operation_fingerprint = Column(String(64), nullable=False)
@@ -198,6 +201,9 @@ class FnbManagerApproval(Base):
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
     approver_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    actor_auth_session_id = Column(
+        String(128), ForeignKey("auth_sessions.session_id"), nullable=True
+    )
     action = Column(String(64), nullable=False)
     entity_type = Column(String(32), nullable=False)
     entity_id = Column(Integer, nullable=False)

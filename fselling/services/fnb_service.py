@@ -58,6 +58,7 @@ from ..schemas.fnb import (
 from ..schemas.shop import ManagerPinSet
 from . import (
     approval_service,
+    auth_session_service,
     inventory_service,
     loyalty_service,
     order_service,
@@ -155,6 +156,7 @@ def _record_operation(
             shop_id=shop_id,
             session_id=session_id,
             actor_user_id=actor_user_id,
+            auth_session_id=db.info.get("auth_session_id"),
             action=action,
             operation_id=operation_id,
             operation_fingerprint=fingerprint,
@@ -400,6 +402,7 @@ def create_manager_approval(
     if session is None:
         raise fnb_error(404, "FNB_SESSION_NOT_FOUND", "Không tìm thấy phiên phục vụ")
     require_session_revision(db, session, request.revision)
+    auth_session_service.fence_live_auth_session(db)
     try:
         token, _ = approval_service.issue_pin_approval(
             db,

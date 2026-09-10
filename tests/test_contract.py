@@ -56,6 +56,14 @@ BASELINE_ROUTES = {
 # Route được thêm CÓ CHỦ Ý sau bản refactor. Mọi route /api không nằm trong
 # BASELINE_ROUTES hoặc danh sách này đều bị coi là thêm ngoài ý muốn.
 ROUTES_BO_SUNG = {
+    ("POST", "/api/auth/logout"),
+    ("GET", "/api/auth/sessions"),
+    ("PATCH", "/api/auth/sessions/{session_id}"),
+    ("DELETE", "/api/auth/sessions/{session_id}"),
+    ("POST", "/api/auth/devices/revoke"),
+    ("GET", "/api/staff/member/{staff_id}/sessions"),
+    ("DELETE", "/api/staff/member/{staff_id}/sessions/{session_id}"),
+    ("POST", "/api/staff/member/{staff_id}/devices/revoke"),
     ("GET", "/api/health/ready"),  # I04: readiness chỉ GO sau schema verify
     # Lịch sử đơn R1: read model tối thiểu cho POS, vẫn khóa theo shop và SALE.
     ("GET", "/api/orders/{shop_id}/history"),

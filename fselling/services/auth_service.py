@@ -19,11 +19,9 @@ from ..core.config import (
 from ..core.i18n import tr
 from ..core.security import (
     burn_password_time,
-    create_access_token,
     generate_otp,
     hash_password,
     is_strong_password,
-    new_session_id,
     verify_password,
 )
 from ..dependencies import effective_staff_role
@@ -36,7 +34,7 @@ from ..schemas.auth import (
     ResendCodeRequest,
     UserCreate,
 )
-from . import email_service
+from . import auth_session_service, email_service
 from .log_service import log_system_action
 
 PASSWORD_POLICY_MSG = "Mật khẩu phải bao gồm kí tự đặc biệt, chữ hoa, chữ thường và số"
@@ -78,10 +76,17 @@ def _gui_mail_nen(
     )
 
 
-def _token_response(user: models.User, token: str) -> Dict[str, str]:
+def _token_response(
+    user: models.User,
+    token: str,
+    auth_session: models.AuthSession,
+) -> Dict[str, object]:
     response = {"access_token": token, "token_type": "bearer", "role": user.role}
     if user.role == "STAFF":
         response["staff_role"] = effective_staff_role(user)
+    response["session"] = auth_session_service.session_view(
+        auth_session, current_session_id=auth_session.session_id
+    )
     return response
 
 
@@ -287,7 +292,12 @@ def forgot_password_reset(db: Session, data: ForgotPasswordReset) -> Dict[str, s
     # nhập nếu đang bị, để chủ tài khoản không phải chờ hết giờ mới vào được.
     user.failed_login_count = 0
     user.locked_until = None
-    user.session_id = new_session_id()  # Logout các nơi khác
+    auth_session_service.revoke_all_user_sessions(
+        db,
+        target_user_id=user.id,
+        actor_user_id=user.id,
+        reason="PASSWORD_RESET",
+    )
     db.commit()
     return {"msg": tr("Đặt lại mật khẩu thành công! Vui lòng đăng nhập lại.")}
 
@@ -309,17 +319,41 @@ def change_password(
             ),
         )
 
+    auth_session_service.fence_live_auth_session(db)
+    current_session = db.get(
+        models.AuthSession, db.info.get("auth_session_id")
+    )
+    if current_session is None:
+        raise HTTPException(status_code=401, detail=tr("Phiên đăng nhập không hợp lệ"))
+    device = (
+        current_session.device_id,
+        current_session.device_name,
+        current_session.device_type,
+    )
     current_user.hashed_password = hash_password(data.new_password)
-    new_sid = new_session_id()
-    current_user.session_id = new_sid
+    affected = auth_session_service.revoke_all_user_sessions(
+        db,
+        target_user_id=current_user.id,
+        actor_user_id=current_user.id,
+        reason="PASSWORD_CHANGE",
+    )
+    auth_session, token = auth_session_service.create_session(
+        db, current_user, *device
+    )
+    db.add(
+        models.SystemLog(
+            user_id=current_user.id,
+            auth_session_id=auth_session.session_id,
+            action="AUTH_SESSIONS_REVOKE_PASSWORD",
+            details=f"sessions={affected}",
+        )
+    )
     db.commit()
-
-    token = create_access_token(current_user.username, new_sid)
     log_system_action(
         db, current_user.id, "CHANGE_PASSWORD", f"User {current_user.username} changed password"
     )
     db.refresh(current_user)
-    return _token_response(current_user, token)
+    return _token_response(current_user, token, auth_session)
 
 
 SAI_THONG_TIN = "Tên đăng nhập hoặc mật khẩu không chính xác"
@@ -393,8 +427,13 @@ def login(db: Session, user: Login) -> Dict[str, str]:
             ),
         )
 
-    new_sid = new_session_id()
-    db_user.session_id = new_sid
+    auth_session, token = auth_session_service.create_session(
+        db,
+        db_user,
+        user.device_id,
+        user.device_name,
+        user.device_type,
+    )
     # Đăng nhập đúng xóa sạch lịch sử sai: bộ đếm là "sai LIÊN TIẾP", không phải
     # tổng cộng cả đời. Không reset thì người hay gõ nhầm sẽ bị khóa oan sau vài
     # tuần dùng bình thường.
@@ -402,8 +441,7 @@ def login(db: Session, user: Login) -> Dict[str, str]:
     db_user.locked_until = None
     db.commit()
 
-    token = create_access_token(db_user.username, new_sid)
     log_system_action(db, db_user.id, "LOGIN", f"User {db_user.username} logged in")
     db.refresh(db_user)
     log_to_file(f"Login success: user='{user.username}' (ID={db_user.id})")
-    return _token_response(db_user, token)
+    return _token_response(db_user, token, auth_session)

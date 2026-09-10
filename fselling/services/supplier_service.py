@@ -37,7 +37,7 @@ from ..schemas.supplier import (
     SupplierStatusUpdate,
     SupplierUpdate,
 )
-from . import catalog_service, shift_service, subscription_service
+from . import auth_session_service, catalog_service, shift_service, subscription_service
 
 
 STATUS_DRAFT = "DRAFT"
@@ -130,6 +130,7 @@ def _lock_shop(db: Session, shop_id: int) -> None:
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=404, detail=tr("Không tìm thấy cửa hàng"))
+    auth_session_service.fence_live_auth_session(db)
 
 
 def _lock_supplier(db: Session, supplier_id: int, shop_id: int) -> None:
@@ -145,6 +146,7 @@ def _lock_supplier(db: Session, supplier_id: int, shop_id: int) -> None:
         raise HTTPException(
             status_code=404, detail=tr("Không tìm thấy nhà cung cấp")
         )
+    auth_session_service.fence_live_auth_session(db)
 
 
 def _get_supplier(

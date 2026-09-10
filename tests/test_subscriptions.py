@@ -60,7 +60,17 @@ def _user_and_shop(db, *, with_subscription=True, now=None):
 
 def _token_for(db, user):
     sid = new_session_id()
-    user.session_id = sid
+    now = datetime.datetime.utcnow()
+    db.add(models.AuthSession(
+        session_id=sid,
+        user_id=user.id,
+        device_id=f"test-{sid}",
+        device_name="Subscription test",
+        device_type="UNKNOWN",
+        created_at=now,
+        last_seen_at=now,
+        expires_at=now + datetime.timedelta(days=1),
+    ))
     db.commit()
     return create_access_token(user.username, sid)
 

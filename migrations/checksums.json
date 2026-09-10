@@ -65,6 +65,11 @@
       "down_revision": "0012_fnb_ticket_service_handoff",
       "path": "versions/0013_roles_returns_approval_r3.py",
       "sha256": "ecaf4b7add5b4cee7f37a24c52aa88ede0568b83406177f2d7cc8571da55c3a3"
+    },
+    "0014_session_device_safety_r4": {
+      "down_revision": "0013_roles_returns_approval_r3",
+      "path": "versions/0014_session_device_safety_r4.py",
+      "sha256": "64e6ef765b0a3cde4909aed9ae08565c7cca0a99da00f7af2ea57faa19c98901"
     }
   }
 }

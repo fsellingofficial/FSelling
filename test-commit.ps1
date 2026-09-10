@@ -79,7 +79,8 @@ $dongHo = [Diagnostics.Stopwatch]::StartNew()
 $pythonExe = if (Test-Path -LiteralPath '.\.venv\Scripts\python.exe' -PathType Leaf) {
     (Resolve-Path -LiteralPath '.\.venv\Scripts\python.exe').Path
 } else {
-    (Get-Command python -CommandType Application -ErrorAction SilentlyContinue).Source
+    Get-Command python -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty Source
 }
 if ($pythonExe) {
     $global:LASTEXITCODE = $null

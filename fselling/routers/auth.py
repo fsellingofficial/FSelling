@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..dependencies import get_current_user, get_db
 from ..schemas.auth import (
+    AuthDeviceRevoke,
+    AuthSessionRename,
     ChangePasswordRequest,
     EmailVerify,
     ForgotPasswordRequest,
@@ -14,7 +16,7 @@ from ..schemas.auth import (
     Token,
     UserCreate,
 )
-from ..services import auth_service
+from ..services import auth_service, auth_session_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -75,5 +77,77 @@ def login(user: Login, db: Session = Depends(get_db)):
 
 
 @router.get("/session-check")
-def session_check(current_user: models.User = Depends(get_current_user)):
+def session_check(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    auth_session_service.require_live_session(
+        db,
+        current_user.id,
+        db.info["auth_session_id"],
+        touch=True,
+    )
+    db.commit()
     return {"status": "ok"}
+
+
+@router.post("/logout")
+def logout(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    auth_session_service.revoke_session(
+        db,
+        current_user,
+        current_user.id,
+        db.info["auth_session_id"],
+        "LOGOUT",
+    )
+    return {"msg": "Logged out"}
+
+
+@router.get("/sessions")
+def list_sessions(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return auth_session_service.list_user_sessions(
+        db, current_user.id, db.info["auth_session_id"]
+    )
+
+
+@router.patch("/sessions/{session_id}")
+def rename_session(
+    session_id: str,
+    data: AuthSessionRename,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return auth_session_service.rename_session(
+        db, current_user, current_user.id, session_id, data.device_name
+    )
+
+
+@router.delete("/sessions/{session_id}")
+def revoke_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return auth_session_service.revoke_session(
+        db, current_user, current_user.id, session_id, "SELF_REVOKE"
+    )
+
+
+@router.post("/devices/revoke")
+def revoke_device(
+    data: AuthDeviceRevoke,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return auth_session_service.revoke_device(
+        db,
+        actor=current_user,
+        target_user_id=current_user.id,
+        device_id=data.device_id,
+    ).as_dict()

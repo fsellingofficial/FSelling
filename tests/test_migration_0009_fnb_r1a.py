@@ -15,6 +15,7 @@ FNB_R1B = "0010_fnb_kitchen_stock_r1b"
 FNB_R1C = "0011_fnb_checkout_r1c"
 PLAN2 = "0012_fnb_ticket_service_handoff"
 PLAN3 = "0013_roles_returns_approval_r3"
+PLAN4 = "0014_session_device_safety_r4"
 EXPECTED_TABLES = {
     "fnb_areas",
     "fnb_tables",
@@ -88,7 +89,7 @@ def test_0008_to_0009_adds_schema_and_defaults_existing_shop_off(tmp_path):
             "INSERT INTO shops (id, name, bank_account_no, bank_code, is_active, owner_id) "
             "VALUES (1, 'FNB Shop', '', '', 1, 1)"
         )
-    assert runner.upgrade("head") == [FNB_R1A, FNB_R1B, FNB_R1C, PLAN2, PLAN3]
+    assert runner.upgrade("head") == [FNB_R1A, FNB_R1B, FNB_R1C, PLAN2, PLAN3, PLAN4]
     runner.verify()
     with sqlite3.connect(database) as connection:
         objects = {

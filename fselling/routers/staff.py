@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..dependencies import get_current_user, get_db
 from ..schemas.staff import StaffCreate, StaffRoleUpdate
+from ..schemas.auth import AuthDeviceRevoke
 from ..services import staff_service
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -61,3 +62,36 @@ def update_staff_role(
     current_user: models.User = Depends(get_current_user),
 ):
     return staff_service.update_staff_role(db, current_user, staff_id, body)
+
+
+@router.get("/member/{staff_id}/sessions")
+def list_staff_sessions(
+    staff_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return staff_service.list_staff_sessions(db, current_user, staff_id)
+
+
+@router.delete("/member/{staff_id}/sessions/{session_id}")
+def revoke_staff_session(
+    staff_id: int,
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return staff_service.revoke_staff_session(
+        db, current_user, staff_id, session_id
+    )
+
+
+@router.post("/member/{staff_id}/devices/revoke")
+def revoke_staff_device(
+    staff_id: int,
+    data: AuthDeviceRevoke,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return staff_service.revoke_staff_device(
+        db, current_user, staff_id, data.device_id
+    )

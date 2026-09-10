@@ -1,6 +1,7 @@
 """Nghiệp vụ cửa hàng."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Dict, List
 
 from fastapi import HTTPException
@@ -10,10 +11,9 @@ from sqlalchemy.orm import Session, aliased
 from .. import models
 from ..core.config import MAX_SHOPS_PER_USER, log_to_file
 from ..core.i18n import tr
-from ..core.security import new_session_id
 from ..dependencies import require_own_shop
 from ..schemas.shop import ManagerPinSet, ShopCreate
-from . import approval_service, subscription_service
+from . import approval_service, auth_session_service, subscription_service
 from .log_service import log_system_action
 
 # (thuộc tính trên model, giá trị từ request, thông báo lỗi khi rỗng)
@@ -277,6 +277,7 @@ def _lock_shop_for_write(db: Session, shop_id: int, owner_id: int) -> None:
     if locked.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=404, detail=tr("Không tìm thấy cửa hàng"))
+    auth_session_service.fence_live_auth_session(db)
 
 
 def _has_loyalty_data(db: Session, shop_id: int) -> bool:
@@ -439,13 +440,31 @@ def delete_shop(db: Session, current_user: models.User, shop_id: int) -> Dict[st
     ).delete(synchronize_session=False)
     # Shop không còn tồn tại thì mọi tài khoản nhân viên gán vào đó phải bị
     # vô hiệu ngay; giữ User để audit cũ vẫn truy ra đúng tên.
+    staff_ids = [
+        staff_id
+        for (staff_id,) in db.query(models.User.id).filter(
+            models.User.role == "STAFF",
+            models.User.staff_shop_id == shop_id,
+        ).all()
+    ]
+    if staff_ids:
+        db.query(models.AuthSession).filter(
+            models.AuthSession.user_id.in_(staff_ids),
+            models.AuthSession.revoked_at.is_(None),
+        ).update(
+            {
+                models.AuthSession.revoked_at: datetime.utcnow(),
+                models.AuthSession.revoked_by_user_id: current_user.id,
+                models.AuthSession.revoke_reason: "SHOP_DELETE",
+            },
+            synchronize_session=False,
+        )
     db.query(models.User).filter(
         models.User.role == "STAFF",
         models.User.staff_shop_id == shop_id,
     ).update(
         {
             models.User.is_active: False,
-            models.User.session_id: new_session_id(),
             models.User.staff_shop_id: None,
         },
         synchronize_session=False,

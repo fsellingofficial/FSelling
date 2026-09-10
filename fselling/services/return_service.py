@@ -887,8 +887,20 @@ def _safe_approval_context(
         "refund_method": request.method if context["tien_hoan"] > 0 else None,
         "non_restock_item_count": context["non_restock_item_count"],
         "reason_codes": list(context["reason_codes"]),
+        "cash_shift_id": context.get("cash_shift_id"),
         "context_fingerprint": context["context_fingerprint"],
     }
+
+
+def _bind_cash_shift_context(
+    context: Dict[str, Any], shift: models.CashShift | None
+) -> Dict[str, Any]:
+    if shift is None:
+        return {**context, "cash_shift_id": None}
+    bound = hashlib.sha256(
+        f"{context['context_fingerprint']}:{int(shift.id)}".encode("ascii")
+    ).hexdigest()
+    return {**context, "cash_shift_id": int(shift.id), "context_fingerprint": bound}
 
 
 def create_return_approval(
@@ -915,6 +927,16 @@ def create_return_approval(
         context = _prepare_return_context(
             db, current_user, order, request, expected_context=True
         )
+        shift = None
+        if context["tien_hoan"] > MONEY_EPSILON and request.method == "cash":
+            shift = order_service._current_cash_shift(
+                db,
+                current_user,
+                order.shop_id,
+                required_for_everyone=True,
+                lock_for_cash_write=True,
+            )
+        context = _bind_cash_shift_context(context, shift)
         if context["context_fingerprint"] != request.context_fingerprint:
             raise _return_error(
                 409,
@@ -1013,6 +1035,7 @@ def create_return(
             required_for_everyone=True,
             lock_for_cash_write=True,
         )
+    context = _bind_cash_shift_context(context, shift)
 
     approval = None
     if context["reason_codes"]:
@@ -1022,6 +1045,7 @@ def create_return(
                 shop_id=shop.id,
                 approver_user_id=current_user.id,
                 actor_user_id=current_user.id,
+                actor_auth_session_id=db.info.get("auth_session_id"),
                 action="ORDER_RETURN_EXCEPTION",
                 entity_type="ORDER",
                 entity_id=order.id,

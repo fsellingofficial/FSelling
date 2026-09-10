@@ -40,7 +40,15 @@ def _prepared(ctx, order_id, draft):
         order = session.get(models.Order, order_id)
         order_service._lock_shop_for_order(session, order.shop_id)
         session.refresh(order)
-        return return_service._prepare_return_context(session, actor, order, draft)
+        context = return_service._prepare_return_context(session, actor, order, draft)
+        if draft.method == "cash":
+            shift = session.query(models.CashShift).filter_by(
+                shop_id=order.shop_id,
+                opened_by_user_id=actor.id,
+                status="OPEN",
+            ).first()
+            context = return_service._bind_cash_shift_context(context, shift)
+        return context
     finally:
         session.rollback()
         session.close()
@@ -319,6 +327,7 @@ def test_return_approval_endpoint_recomputes_context_and_only_adds_approval(clie
     order_id = _ban(client, ctx, [(product, 1)], method="cash")
     line = _dong_don(client, ctx, order_id, product["id"])
     cashier_username, cashier_token = new_staff(client, ctx, "CASHIER")
+    _mo_ca(client, ctx, token=cashier_token)
     assert client.patch(
         f"/api/shops/{ctx['shop_id']}/manager-pin",
         json={"pin": "2468"},
@@ -367,6 +376,7 @@ def test_return_approval_endpoint_rejects_changed_context(client):
     order_id = _ban(client, ctx, [(product, 1)], method="cash")
     line = _dong_don(client, ctx, order_id, product["id"])
     _, cashier_token = new_staff(client, ctx, "CASHIER")
+    _mo_ca(client, ctx, token=cashier_token)
     draft = _draft(line["id"], restock=False)
 
     response = client.post(
@@ -385,6 +395,14 @@ def test_return_approval_endpoint_rejects_changed_context(client):
 
 
 def _approve(client, ctx, actor_token, actor_username, order_id, draft):
+    if draft.method == "cash":
+        with SessionLocal() as session:
+            actor = session.query(models.User).filter_by(username=actor_username).one()
+            has_shift = session.query(models.CashShift).filter_by(
+                shop_id=ctx["shop_id"], opened_by_user_id=actor.id, status="OPEN"
+            ).first()
+        if not has_shift:
+            _mo_ca(client, ctx, token=actor_token)
     fingerprint = _prepared(
         {**ctx, "username": actor_username}, order_id, draft
     )["context_fingerprint"]

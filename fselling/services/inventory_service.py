@@ -16,6 +16,7 @@ from ..core.i18n import tr
 from ..core.money import checked_add, checked_multiply, checked_quantity, checked_vnd, cumulative_basis
 from ..core.numeric_limits import MAX_SAFE_QUANTITY
 from ..schemas.order import OrderItemCreate
+from . import auth_session_service
 
 # Cách định danh một dòng hàng: ("id", 7) hoặc ("name", "Sữa tươi").
 # Gom theo khóa này thay vì theo tên trần để hai sản phẩm trùng tên không bị
@@ -141,6 +142,7 @@ def lock_shop_for_inventory(db: Session, shop_id: int) -> None:
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=404, detail=tr("Không tìm thấy cửa hàng"))
+    auth_session_service.fence_live_auth_session(db)
 
 
 def _khoa_cua(item: OrderItemCreate) -> KhoaSanPham:

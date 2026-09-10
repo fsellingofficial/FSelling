@@ -5843,6 +5843,7 @@ function renderStaff(list) {
                 </select>
             </td>
             <td style="text-align:right;">
+                ${MY_ROLE === 'SELLER' ? `<button type="button" class="btn-outline" data-staff-sessions-id="${staffId}" style="padding: 0.2rem 0.5rem;" title="${escapeHtml(t('seller.staff.sessions'))}" aria-label="${escapeHtml(t('seller.staff.sessions'))}"><i class="ph ph-devices"></i></button>` : ''}
                 <button type="button" class="btn-outline" data-staff-remove-id="${staffId}" style="padding: 0.2rem 0.5rem; color:#ef4444;" title="${escapeHtml(t('seller.actions.stop_account'))}" aria-label="${escapeHtml(t('seller.actions.stop_account'))}"><i class="ph ph-user-minus"></i></button>
             </td>
         </tr>`;
@@ -5850,6 +5851,12 @@ function renderStaff(list) {
     tbody.querySelectorAll('[data-staff-remove-id]').forEach(button => {
         button.addEventListener('click', () => {
             xoaNhanVien(Number(button.dataset.staffRemoveId));
+        });
+    });
+    tbody.querySelectorAll('[data-staff-sessions-id]').forEach(button => {
+        button.addEventListener('click', () => {
+            const staff = currentStaff.find(item => Number(item.id) === Number(button.dataset.staffSessionsId));
+            if (staff) SessionDeviceR4.openStaff(staff.id, staff.username);
         });
     });
 }

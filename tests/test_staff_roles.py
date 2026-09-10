@@ -165,7 +165,7 @@ def test_login_staff_tra_staff_role_con_seller_khong_them_khoa(client):
     )
     assert staff_login.status_code == 200
     assert set(staff_login.json()) == {
-        "access_token", "token_type", "role", "staff_role"
+        "access_token", "token_type", "role", "staff_role", "session"
     }
     assert staff_login.json()["staff_role"] == "CASHIER"
 
@@ -173,7 +173,9 @@ def test_login_staff_tra_staff_role_con_seller_khong_them_khoa(client):
         "/api/auth/login",
         json={"username": ctx["username"], "password": "Seller@2026"},
     )
-    assert set(seller_login.json()) == {"access_token", "token_type", "role"}
+    assert set(seller_login.json()) == {
+        "access_token", "token_type", "role", "session"
+    }
 
 
 def test_chu_shop_doi_service_sang_cashier_va_vo_hieu_phien_cu(client):

@@ -91,6 +91,12 @@ def test_issue_pin_approval_wrong_identity_performs_one_hash_path(
         owner = session.query(models.User).filter_by(username=ctx["username"]).one()
         actor = session.query(models.User).filter_by(username=cashier_username).one()
         shop = session.get(models.Shop, ctx["shop_id"])
+        session.info["auth_session_id"] = (
+            session.query(models.AuthSession.session_id)
+            .filter(models.AuthSession.user_id == actor.id)
+            .order_by(models.AuthSession.created_at.desc())
+            .scalar()
+        )
         owner.fnb_manager_pin_hash = hash_password("1234")
         session.commit()
         real_verify = approval_service.verify_password
@@ -137,6 +143,12 @@ def test_issue_and_consume_approval_hashes_token_and_binds_every_field(client):
         owner = session.query(models.User).filter_by(username=ctx["username"]).one()
         actor = session.query(models.User).filter_by(username=cashier_username).one()
         shop = session.get(models.Shop, ctx["shop_id"])
+        session.info["auth_session_id"] = (
+            session.query(models.AuthSession.session_id)
+            .filter(models.AuthSession.user_id == actor.id)
+            .order_by(models.AuthSession.created_at.desc())
+            .scalar()
+        )
         owner.fnb_manager_pin_hash = hash_password("1234")
         token, approval = approval_service.issue_pin_approval(
             session,

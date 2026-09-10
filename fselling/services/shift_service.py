@@ -25,6 +25,7 @@ from ..dependencies import (
     require_staff_permission,
 )
 from ..schemas.shift import CashMovementCreate, ShiftClose, ShiftOpen
+from . import auth_session_service
 
 STATUS_OPEN = "OPEN"
 STATUS_CLOSED = "CLOSED"
@@ -64,6 +65,7 @@ def _add_audit(
     db.add(
         models.SystemLog(
             user_id=user_id,
+            auth_session_id=db.info.get("auth_session_id"),
             action=action,
             details=details,
         )
@@ -207,7 +209,10 @@ def _lock_open_shift(db: Session, shift_id: int) -> bool:
         ),
         {"shift_id": shift_id, "open_status": STATUS_OPEN},
     )
-    return result.rowcount == 1
+    locked = result.rowcount == 1
+    if locked:
+        auth_session_service.fence_live_auth_session(db)
+    return locked
 
 
 def add_external_cash_out(
@@ -346,6 +351,7 @@ def open_shift(
     opening_amount = int(request.opening_cash_amount)
     if opening_amount < 0:
         raise HTTPException(status_code=400, detail=tr("Tiền đầu ca không hợp lệ"))
+    auth_session_service.fence_live_auth_session(db)
 
     existing = (
         db.query(models.CashShift)

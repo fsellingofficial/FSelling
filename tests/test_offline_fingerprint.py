@@ -58,6 +58,7 @@ def test_orm_maps_exact_three_released_tables_without_owning_new_schema():
         "catalog_version", "catalog_snapshot_digest", "secret_sha256",
         "server_anchor_id", "anchor_server_time_utc", "issued_at", "expires_at",
         "state_version", "revoked_at", "revoke_reason", "revoked_by_user_id",
+        "issued_by_auth_session_id",
     }
     assert set(registry.columns.keys()) == {
         "offline_uuid", "shop_id", "order_id", "server_fingerprint",

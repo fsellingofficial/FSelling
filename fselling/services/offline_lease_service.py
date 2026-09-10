@@ -408,6 +408,7 @@ def issue_lease(
             issued_at=issued_at,
             expires_at=canonical_time_text(now + LEASE_TTL),
             state_version=0,
+            issued_by_auth_session_id=db.info.get("auth_session_id"),
         )
         db.add(lease)
         db.flush()

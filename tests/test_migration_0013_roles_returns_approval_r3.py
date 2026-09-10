@@ -12,6 +12,7 @@ from fselling.migration.topology import StaticInventory
 ROOT = Path(__file__).resolve().parents[1]
 PLAN2 = "0012_fnb_ticket_service_handoff"
 PLAN3 = "0013_roles_returns_approval_r3"
+PLAN4 = "0014_session_device_safety_r4"
 FINGERPRINT = "a" * 64
 
 
@@ -88,7 +89,7 @@ def test_0012_to_0013_adds_nullable_links_without_rewriting_legacy_rows(tmp_path
     database = tmp_path / "plan3.db"
     runner = _database_at_plan2(database)
 
-    assert runner.upgrade("head") == [PLAN3]
+    assert runner.upgrade("head") == [PLAN3, PLAN4]
     runner.verify()
 
     with sqlite3.connect(database) as connection:

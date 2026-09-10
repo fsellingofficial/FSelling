@@ -45,7 +45,7 @@ from ..schemas.expense import (
     ExpenseTemplateCreate,
     ExpenseTemplateUpdate,
 )
-from . import shift_service
+from . import auth_session_service, shift_service
 
 _VIETNAM_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -755,6 +755,7 @@ def create_expense(
             )
         template_id = mau.id
 
+    auth_session_service.fence_live_auth_session(db)
     row = models.OperatingExpense(
         shop_id=shop_id,
         category_id=loai.id,
@@ -859,6 +860,7 @@ def void_expense(
             ),
         )
 
+    auth_session_service.fence_live_auth_session(db)
     row.voided_at = datetime.utcnow()
     row.voided_by_user_id = current_user.id
     _audit(

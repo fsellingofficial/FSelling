@@ -22,6 +22,7 @@ def log_system_action(
         log_entry = models.SystemLog(
             user_id=user_id,
             shop_id=shop_id,
+            auth_session_id=db.info.get("auth_session_id"),
             action=action,
             details=details,
         )

@@ -15,6 +15,9 @@ class SystemLog(Base):
     # nhiều shop: chỉ suy từ user_id sẽ hoặc làm log vô hình, hoặc lộ việc của
     # shop khác. NULL giữ tương thích toàn bộ lịch sử cũ.
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True, index=True)
+    auth_session_id = Column(
+        String(128), ForeignKey("auth_sessions.session_id"), nullable=True, index=True
+    )
     action = Column(String, index=True)
     details = Column(String)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

@@ -36,6 +36,7 @@ R1B = "0010_fnb_kitchen_stock_r1b"
 R1C = "0011_fnb_checkout_r1c"
 PLAN2 = "0012_fnb_ticket_service_handoff"
 PLAN3 = "0013_roles_returns_approval_r3"
+PLAN4 = "0014_session_device_safety_r4"
 
 # Pinned so an edit to a released revision fails here instead of silently
 # changing what every managed database already applied.
@@ -234,10 +235,10 @@ def test_fresh_and_restart_verify_are_stable(tmp_path):
     coordinator = _coordinator(database)
 
     assert coordinator.init() == [ROOT]
-    assert coordinator.upgrade("head") == [I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
+    assert coordinator.upgrade("head") == [I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3, PLAN4]
     report = coordinator.verify()
-    assert report.current_revision == report.head_revision == PLAN3
-    assert report.revision_count == 13
+    assert report.current_revision == report.head_revision == PLAN4
+    assert report.revision_count == 14
 
     assert coordinator.upgrade("head") == []
     assert coordinator.verify().database_uuid == report.database_uuid
@@ -273,7 +274,7 @@ def test_released_revisions_and_control_fingerprint_are_untouched():
 def test_0005_is_linear_self_contained_and_checksummed(tmp_path):
     graph = _coordinator(tmp_path / "unused.db")._graph()
     assert [item.revision for item in graph.revisions] == [
-        ROOT, I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3
+        ROOT, I04, I05, I09, I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3, PLAN4
     ]
     spec = next(item for item in graph.revisions if item.revision == I09C)
     assert spec.down_revision == I09
@@ -343,7 +344,7 @@ def _backfilled(tmp_path: Path, name: str, seeds) -> tuple[MigrationCoordinator,
         connection.commit()
     finally:
         connection.close()
-    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
+    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3, PLAN4]
     coordinator.verify()
     return coordinator, database
 
@@ -512,7 +513,7 @@ def test_unknown_legacy_code_blocks_the_migration(tmp_path, issue):
         assert _rows(database, "SELECT version_num FROM alembic_version") == [(I09,)]
     else:
         # Whitespace-only carries no claim at all, so it is simply nothing.
-        assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
+        assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3, PLAN4]
         assert _rows(database, "SELECT COUNT(*) FROM offline_receipt_issues") == [(0,)]
 
 
@@ -553,7 +554,7 @@ def test_backfill_completes_partial_issue_coverage(tmp_path):
     finally:
         connection.close()
 
-    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
+    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3, PLAN4]
     coordinator.verify()
     assert _rows(
         database,
@@ -608,7 +609,7 @@ def test_backfill_is_a_no_op_when_rows_already_exist(tmp_path):
     finally:
         connection.close()
 
-    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
+    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3, PLAN4]
     coordinator.verify()
     assert _rows(database, "SELECT COUNT(*) FROM offline_receipt_issues") == [(1,)]
 
@@ -651,7 +652,7 @@ def _guarded(tmp_path: Path, name: str):
         connection.commit()
     finally:
         connection.close()
-    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3]
+    assert coordinator.upgrade("head") == [I09C, I09E, I10A, PO, FNB, R1B, R1C, PLAN2, PLAN3, PLAN4]
     coordinator.verify()
     return coordinator, database
 
@@ -877,7 +878,7 @@ def test_a_future_issue_code_with_its_mirror_verifies(tmp_path):
         connection.close()
 
     _verify_0005(coordinator, database)
-    assert coordinator.verify().current_revision == PLAN3
+    assert coordinator.verify().current_revision == PLAN4
 
 
 @pytest.mark.parametrize(

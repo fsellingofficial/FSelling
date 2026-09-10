@@ -15,6 +15,7 @@ from ..dependencies import (
     has_staff_permission,
     require_shop_access,
 )
+from . import auth_session_service
 
 
 def approval_error(status_code: int, code: str, message: str, **extra) -> HTTPException:
@@ -48,7 +49,20 @@ def set_manager_pin(
         raise approval_error(
             403, "MANAGER_REQUIRED", "Chỉ chủ cửa hàng hoặc quản lý được đặt PIN"
         )
+    auth_session_service.fence_live_auth_session(db)
     current_user.fnb_manager_pin_hash = hash_password(pin)
+    invalidated = invalidate_approvals_for_approver(
+        db, current_user.id, "PIN_CHANGE"
+    )
+    db.add(
+        models.SystemLog(
+            user_id=current_user.id,
+            shop_id=shop_id,
+            auth_session_id=db.info.get("auth_session_id"),
+            action="APPROVALS_INVALIDATE_PIN_CHANGE",
+            details=f"approvals={invalidated}",
+        )
+    )
     db.commit()
     return {"shop_id": shop_id, "manager_pin_configured": True}
 
@@ -68,6 +82,7 @@ def issue_pin_approval(
 ) -> tuple[str, models.FnbManagerApproval]:
     """Verify/rate-limit the approver and add one five-minute hashed token."""
     now = datetime.datetime.utcnow()
+    actor_auth_session_id = db.info.get("auth_session_id")
     failed_attempts = (
         db.query(models.FnbManagerApproval)
         .filter(
@@ -123,10 +138,15 @@ def issue_pin_approval(
         raise approval_error(403, "APPROVAL_PIN_INVALID", "PIN quản lý không đúng")
 
     token = secrets.token_urlsafe(32)
+    if not actor_auth_session_id:
+        raise approval_error(
+            401, "AUTH_SESSION_INVALID", "Phiên đăng nhập không hợp lệ"
+        )
     approval = models.FnbManagerApproval(
         shop_id=shop.id,
         approver_user_id=approver.id,
         actor_user_id=actor.id,
+        actor_auth_session_id=actor_auth_session_id,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
@@ -154,12 +174,19 @@ def consume_approval(
 ) -> models.FnbManagerApproval:
     """Lock and mark one exactly-bound approval used without committing."""
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    actor_auth_session_id = db.info.get("auth_session_id")
+    if not actor_auth_session_id:
+        raise approval_error(
+            401, "AUTH_SESSION_INVALID", "Phiên đăng nhập không hợp lệ"
+        )
     approval = (
         db.query(models.FnbManagerApproval)
         .filter(
             models.FnbManagerApproval.token_hash == token_hash,
             models.FnbManagerApproval.shop_id == shop_id,
             models.FnbManagerApproval.actor_user_id == actor_user_id,
+            models.FnbManagerApproval.actor_auth_session_id
+            == actor_auth_session_id,
             models.FnbManagerApproval.action == action,
             models.FnbManagerApproval.entity_type == entity_type,
             models.FnbManagerApproval.entity_id == entity_id,
@@ -171,6 +198,10 @@ def consume_approval(
     )
     if approval is None:
         raise approval_error(403, "APPROVAL_INVALID", "Lượt duyệt không còn hợp lệ")
+    shop = db.get(models.Shop, approval.shop_id)
+    approver = db.get(models.User, approval.approver_user_id)
+    if shop is None or not _is_manager(shop, approver):
+        raise approval_error(403, "APPROVAL_INVALID", "Lượt duyệt không còn hợp lệ")
     if approval.context_fingerprint != context_fingerprint:
         raise approval_error(
             409,
@@ -180,3 +211,18 @@ def consume_approval(
     approval.used_at = datetime.datetime.utcnow()
     db.flush()
     return approval
+
+
+def invalidate_approvals_for_approver(
+    db: Session, approver_user_id: int, reason: str
+) -> int:
+    del reason
+    now = datetime.datetime.utcnow()
+    return db.query(models.FnbManagerApproval).filter(
+        models.FnbManagerApproval.approver_user_id == approver_user_id,
+        models.FnbManagerApproval.used_at.is_(None),
+        models.FnbManagerApproval.expires_at > now,
+    ).update(
+        {models.FnbManagerApproval.used_at: now},
+        synchronize_session=False,
+    )

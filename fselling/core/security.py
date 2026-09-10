@@ -1,7 +1,7 @@
 """Hash mật khẩu, chính sách mật khẩu và JWT.
 
 Giữ nguyên thuật toán cũ: bcrypt cho mật khẩu, HS256 cho JWT,
-payload gồm {sub, exp, sid} phục vụ cơ chế single-session.
+payload gồm {sub, exp, sid}; trạng thái phiên nằm trong ``auth_sessions``.
 """
 from __future__ import annotations
 
@@ -60,12 +60,16 @@ def burn_password_time() -> None:
 
 
 def new_session_id() -> str:
-    """Sinh session_id mới -> mọi token cũ của user lập tức mất hiệu lực."""
+    """Sinh định danh phiên ngẫu nhiên phía server."""
     return uuid.uuid4().hex
 
 
-def create_access_token(username: str, session_id: str) -> str:
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+def create_access_token(
+    username: str, session_id: str, *, expires_at: datetime | None = None
+) -> str:
+    expire = expires_at or (
+        datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
     to_encode: Dict[str, Any] = {"sub": username, "exp": expire, "sid": session_id}
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 

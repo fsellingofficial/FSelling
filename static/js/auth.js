@@ -46,7 +46,11 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     setSubmitState(submitBtn, 'login.submitting', true);
 
     try {
-        const data = await apiCall('/auth/login', 'POST', { username, password });
+        const data = await apiCall('/auth/login', 'POST', {
+            username,
+            password,
+            ...buildAuthDeviceMetadata()
+        });
         // Same-tab A -> B không phát storage event. Seal A (hoặc ghi marker
         // fail-closed nếu trang login chưa nạp OfflineBan) trước khi overwrite B.
         await prepareAuthIdentityChangeV1(username);
@@ -60,6 +64,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         // Để hóa đơn ở POS ghi được tên người bán. Lấy từ ô đăng nhập chứ không
         // giải mã token: chỉ dùng để hiển thị, không dùng để phân quyền.
         localStorage.setItem('username', username);
+        cacheAuthSessionSummary(data.session);
         if (data.role === 'ADMIN') {
             navigateToPage('/admin');
         } else if (openDemoSale && data.role === 'SELLER') {

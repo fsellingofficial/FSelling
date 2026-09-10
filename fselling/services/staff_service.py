@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..core.i18n import tr
-from ..core.security import hash_password, is_strong_password, new_session_id
+from ..core.security import hash_password, is_strong_password
 from ..dependencies import effective_staff_role, require_own_shop
 from ..schemas.staff import StaffCreate, StaffRoleUpdate
-from . import subscription_service
+from . import auth_session_service, subscription_service
 from .log_service import log_system_action
 
 ROLE_STAFF = "STAFF"
@@ -39,6 +39,7 @@ def create_staff(
     # Chỉ chủ shop mới được tạo nhân viên cho shop của mình.
     require_own_shop(db, shop_id, current_user)
     subscription_service.require_pro(db, shop_id)
+    auth_session_service.fence_live_auth_session(db)
 
     username = (data.username or "").strip()
     if not username:
@@ -90,6 +91,55 @@ def list_staff(db: Session, current_user: models.User, shop_id: int) -> List[Dic
     return [_to_out(s) for s in nhan_vien]
 
 
+def _owned_staff(
+    db: Session, current_user: models.User, staff_id: int
+) -> models.User:
+    staff = db.query(models.User).filter(
+        models.User.id == staff_id,
+        models.User.role == ROLE_STAFF,
+    ).first()
+    if staff is None:
+        raise HTTPException(status_code=404, detail=tr("Không tìm thấy nhân viên"))
+    require_own_shop(db, staff.staff_shop_id, current_user)
+    return staff
+
+
+def list_staff_sessions(
+    db: Session, current_user: models.User, staff_id: int
+) -> list[dict]:
+    staff = _owned_staff(db, current_user, staff_id)
+    return auth_session_service.list_user_sessions(
+        db, staff.id, db.info["auth_session_id"]
+    )
+
+
+def revoke_staff_session(
+    db: Session,
+    current_user: models.User,
+    staff_id: int,
+    session_id: str,
+) -> dict:
+    staff = _owned_staff(db, current_user, staff_id)
+    return auth_session_service.revoke_session(
+        db, current_user, staff.id, session_id, "OWNER_REVOKE"
+    )
+
+
+def revoke_staff_device(
+    db: Session,
+    current_user: models.User,
+    staff_id: int,
+    device_id: str,
+) -> dict[str, int]:
+    staff = _owned_staff(db, current_user, staff_id)
+    return auth_session_service.revoke_device(
+        db,
+        actor=current_user,
+        target_user_id=staff.id,
+        device_id=device_id,
+    ).as_dict()
+
+
 def delete_staff(db: Session, current_user: models.User, staff_id: int) -> Dict[str, str]:
     staff = (
         db.query(models.User)
@@ -118,11 +168,16 @@ def delete_staff(db: Session, current_user: models.User, staff_id: int) -> Dict[
             ),
         )
 
+    auth_session_service.fence_live_auth_session(db)
     username = staff.username
     # Giữ User để Order/CashShift/SystemLog còn truy ra đúng tên thu ngân.
-    # Đổi session_id để token đang mở trên web hết hiệu lực ngay.
     staff.is_active = False
-    staff.session_id = new_session_id()
+    auth_session_service.revoke_all_user_sessions(
+        db,
+        target_user_id=staff.id,
+        actor_user_id=current_user.id,
+        reason="ACCOUNT_DISABLE",
+    )
     db.commit()
     log_system_action(
         db, current_user.id, "DISABLE_STAFF", f"Ngừng tài khoản nhân viên '{username}'"
@@ -145,9 +200,14 @@ def reset_staff_password(
     if not is_strong_password(new_password):
         raise HTTPException(status_code=400, detail=tr(PASSWORD_POLICY_MSG))
 
+    auth_session_service.fence_live_auth_session(db)
     staff.hashed_password = hash_password(new_password)
-    # Vô hiệu mọi phiên đăng nhập cũ của nhân viên này.
-    staff.session_id = new_session_id()
+    auth_session_service.revoke_all_user_sessions(
+        db,
+        target_user_id=staff.id,
+        actor_user_id=current_user.id,
+        reason="PASSWORD_RESET",
+    )
     db.commit()
     log_system_action(
         db,
@@ -174,11 +234,16 @@ def update_staff_role(
     require_own_shop(db, staff.staff_shop_id, current_user)
     subscription_service.require_pro(db, staff.staff_shop_id)
 
+    auth_session_service.fence_live_auth_session(db)
     old_role = effective_staff_role(staff)
     staff.staff_role = data.staff_role
-    # Buộc tài khoản đăng nhập lại để giao diện nhận preset mới ngay, thay vì
-    # tiếp tục hiện các nút cũ rồi chỉ bị backend từ chối.
-    staff.session_id = new_session_id()
+    # Buộc mọi thiết bị đăng nhập lại để giao diện nhận preset mới ngay.
+    auth_session_service.revoke_all_user_sessions(
+        db,
+        target_user_id=staff.id,
+        actor_user_id=current_user.id,
+        reason="ROLE_CHANGE",
+    )
     db.commit()
     db.refresh(staff)
     result = _to_out(staff)

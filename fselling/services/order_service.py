@@ -31,6 +31,7 @@ from ..schemas.order import (
     RefundComplete,
 )
 from . import (
+    auth_session_service,
     inventory_service,
     loyalty_service,
     payment_service,
@@ -207,6 +208,7 @@ def _them_nhat_ky(
         models.SystemLog(
             user_id=user_id,
             shop_id=shop_id,
+            auth_session_id=db.info.get("auth_session_id"),
             action=action,
             details=details,
         )
@@ -483,6 +485,7 @@ def _lock_shop_for_order(db: Session, shop_id: int) -> None:
     if locked.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=404, detail=tr("Không tìm thấy cửa hàng"))
+    auth_session_service.fence_live_auth_session(db)
 
 
 def _award_loyalty_paid_order(

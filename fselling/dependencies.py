@@ -12,6 +12,7 @@ from .core.config import log_to_file
 from .core.database import SessionLocal
 from .core.i18n import tr
 from .core.security import decode_access_token, extract_bearer_token
+from .services import auth_session_service
 
 STAFF_ROLE_CASHIER = "CASHIER"
 STAFF_ROLE_SERVICE = "SERVICE"
@@ -109,7 +110,7 @@ def get_current_user(
         payload = decode_access_token(token)
         username = payload.get("sub")
         sid = payload.get("sid")
-        if username is None:
+        if username is None or sid is None:
             log_to_file("Auth failed: sub is None")
             raise HTTPException(status_code=401, detail=tr("Phiên đăng nhập không hợp lệ"))
     except jwt.PyJWTError as e:
@@ -124,15 +125,8 @@ def get_current_user(
         log_to_file(f"Auth failed: User disabled: '{username}'")
         raise HTTPException(status_code=401, detail=tr("Tài khoản đã ngừng hoạt động"))
 
-    # Kiểm tra Session ID để đảm bảo đăng xuất thiết bị cũ
-    if user.session_id and sid != user.session_id:
-        log_to_file(f"Auth failed: session_id mismatch for user '{username}'")
-        raise HTTPException(
-            status_code=401,
-            detail=tr(
-                "Tài khoản đã được đăng nhập ở thiết bị khác. Vui lòng đăng nhập lại."
-            ),
-        )
+    auth_session = auth_session_service.require_live_session(db, user.id, sid)
+    auth_session_service.bind_request_session(db, auth_session)
 
     log_to_file(f"Auth success: user='{username}' (ID={user.id})")
     return user
