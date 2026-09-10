@@ -156,7 +156,7 @@ Focused evidence covers:
 - Actual lost-device transport, network split, response loss and an in-flight
   revoke race remain unharnessed browser scenarios.
 - No push-notification or remote device-control channel exists in this plan.
-- Independent second-agent safety review is pending after focused recovery.
+- Independent Astra High safety re-review: `ACCEPTED` at commit `757794b`.
 
 ## Findings and residual risk
 
@@ -171,9 +171,11 @@ Focused evidence covers:
 
 ## Owner-controlled completion gate
 
-The first owner gate failed and created no commit. After independent review, the
-owner must review the corrected R4 file list and rerun the full-suite/commit gate:
+The first owner gate failed and created no commit. After focused recovery, the
+owner reran the full-suite/commit gate successfully and created commit `757794b`
+(`feat: add session and device safety r4`) on
+`codex/session-device-safety-plan4`.
 
 ```powershell
-.\test-commit.ps1 "feat: add session and device safety r4"
+.\test-commit.ps1 -Message "feat: add session and device safety r4"
 ```
