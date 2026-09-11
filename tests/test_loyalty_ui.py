@@ -185,11 +185,11 @@ def test_don_giam_con_0_dong_khong_hien_qr_va_file_tinh_da_bump_cache():
     assert "zero_total_done" in zero_total
     assert "await hienHoaDon(currentOrderId)" in zero_total
     assert "qrSection" not in zero_total
-    assert "/js/pos.js?v=20260824-r14-production2" in pos_html
-    assert "/js/locales/pos.js?v=20260815-i11-doisoat" in pos_html
+    assert "/js/pos.js?v=20260911-r5-7" in pos_html
+    assert "/js/locales/pos.js?v=20260911-r5-7" in pos_html
     # R1 Forecast prefill sửa cả hai file này nên chúng cùng sang mốc mới.
-    assert "/js/seller.js?v=20260825-assistant-guided-tasks-r1-1" in seller_html
-    assert "/js/locales/seller.js?v=20260825-assistant-guided-tasks-r1-1" in seller_html
+    assert "/js/seller.js?v=20260911-r5-5" in seller_html
+    assert "/js/locales/seller.js?v=20260911-r5-5" in seller_html
 
 
 def test_khoa_i18n_quan_trong_co_du_tieng_viet_va_tieng_anh():

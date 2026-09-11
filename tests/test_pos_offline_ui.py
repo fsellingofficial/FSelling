@@ -153,8 +153,8 @@ def test_da_bump_phien_ban_pos():
     assert "/js/locales/pos.js?v=20260802-bien-the" not in html
     assert "/js/offline-ban.js?v=" in html
     assert "/js/offline-ban.js?v=20260813-i09-f3&g=20260813-i09-g2h6" in html
-    assert "/js/pos.js?v=20260824-r14-production2" in html
-    assert "/js/api.js?v=20260812-i09-f1-c1" in html
+    assert "/js/pos.js?v=20260911-r5-7" in html
+    assert "/js/api.js?v=20260911-r5-5" in html
 
 
 @pytest.mark.parametrize("khoa", CAU_OFFLINE)

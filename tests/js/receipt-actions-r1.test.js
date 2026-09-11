@@ -402,7 +402,14 @@ function order(overrides = {}) {
             share: async value => { openedPayload = value; }
         }
     });
-    openedContext.document.getElementById = () => ({ style: {} });
+    let scrolledReceipt = false;
+    let focusedReceiptAction = false;
+    openedContext.document.getElementById = id => ({
+        style: {},
+        scrollIntoView() { if (id === 'hoaDonSection') scrolledReceipt = true; }
+    });
+    openedContext.document.querySelector = selector => selector === '#hoaDonActions button'
+        ? { focus() { focusedReceiptAction = true; } } : null;
     openedContext.apiCall = async () => order();
     openedContext.resetPOS = () => {};
     openedContext.veHoaDon = () => {};
@@ -415,6 +422,8 @@ function order(overrides = {}) {
     assert(openStart >= 0 && openEnd > openStart, 'missing receipt opening flow');
     vm.runInContext(`${source.slice(openStart, openEnd)}; this.openReceipt = hienHoaDon;`, openedContext);
     await openedContext.openReceipt(42);
+    assert.equal(scrolledReceipt, true);
+    assert.equal(focusedReceiptAction, true);
     await openedContext.shareReceipt();
     assert.equal(openedPayload.title, 'Hóa đơn #42 · Tạp hóa An Nhiên');
 

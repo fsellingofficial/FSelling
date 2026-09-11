@@ -7,38 +7,41 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/img/icon-192.png">
     <title>Bếp / Bar | F-Selling</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260731-i18n4">
-    <link rel="stylesheet" href="/css/fnb-r1a.css?v=20260907-plan2-correction1">
+    <link rel="stylesheet" href="/css/style.css?v=20260911-r5-5">
+    <link rel="stylesheet" href="/css/fnb-r1a.css?v=20260911-r5-6">
     <link rel="stylesheet" href="/css/fnb-station-r1b.css?v=20260907-plan2">
-    <link rel="stylesheet" href="/css/session-device-r4.css?v=20260910-r4-1">
+    <link rel="stylesheet" href="/css/session-device-r4.css?v=20260911-r5-5">
 </head>
 <body class="fnb-page fnb-station-page">
     <header class="fnb-header">
-        <a class="fnb-back" href="/fnb">Sơ đồ bàn</a>
-        <h1 id="fnbStationTitle">Bếp đang chờ</h1>
-        <label class="fnb-shop-field" for="fnbStationShop"><span>Cửa hàng</span><select id="fnbStationShop" aria-label="Cửa hàng"></select></label>
+        <a class="fnb-back" href="/fnb" data-i18n="fnb.station.back">Sơ đồ bàn</a>
+        <h1 id="fnbStationTitle">Bếp</h1>
+        <label class="fnb-shop-field" for="fnbStationShop"><span data-i18n="fnb.shop.label">Cửa hàng</span><select id="fnbStationShop" aria-label="Cửa hàng" data-i18n-aria-label="fnb.shop.label"></select></label>
+    <details class="ui-tools"><summary data-i18n="common.tools">Khác</summary><div data-ui-tools></div></details>
     </header>
     <main class="fnb-station-main">
         <div class="fnb-station-heading">
-            <div><p class="eyebrow">Phiếu chế biến</p><h2>Làm theo thứ tự gửi món</h2></div>
+            <div><p class="eyebrow" data-i18n="fnb.station.eyebrow">Phiếu chế biến</p><h2 data-i18n="fnb.station.heading">Làm theo thứ tự gửi món</h2></div>
             <div class="fnb-station-tools"><span id="fnbStationConnection" class="fnb-live-badge">● Đang cập nhật</span><button id="fnbStationRetry" class="fnb-secondary" type="button" hidden>Thử lại</button><p id="fnbStationStatus" role="status" aria-live="polite"></p></div>
         </div>
+        <p id="fnbStationMutationStatus" role="status"></p>
         <div id="fnbStationTickets" class="fnb-ticket-grid" aria-live="polite"></div>
     </main>
     <dialog id="fnbOutOfStockDialog" class="fnb-stock-dialog" aria-labelledby="fnbOutOfStockTitle">
         <form id="fnbOutOfStockForm">
-            <div class="fnb-dialog-heading"><h2 id="fnbOutOfStockTitle">Báo món hết</h2><button type="button" class="fnb-icon-button" data-action="close-stock" aria-label="Đóng">×</button></div>
-            <label for="fnbOutOfStockReason">Món nào đã hết?</label>
-            <input id="fnbOutOfStockReason" maxlength="200" required autocomplete="off" placeholder="Ví dụ: Lẩu bò">
-            <button type="submit">Xác nhận món hết</button>
+            <div class="fnb-dialog-heading"><h2 id="fnbOutOfStockTitle" data-i18n="fnb.station.stock">Báo món hết</h2><button type="button" class="fnb-icon-button" data-action="close-stock" aria-label="Đóng" data-i18n-aria-label="common.close">×</button></div>
+            <label for="fnbOutOfStockReason" data-i18n="fnb.station.stock_reason">Món nào đã hết?</label>
+            <input id="fnbOutOfStockReason" maxlength="200" required autocomplete="off" placeholder="Ví dụ: Lẩu bò" data-i18n-placeholder="fnb.station.stock_example">
+            <button type="submit" data-i18n="fnb.station.stock_confirm">Xác nhận món hết</button>
         </form>
     </dialog>
     <script src="/js/vendor/i18next-26.3.6.min.js?v=20260731-i18n4"></script>
-    <script src="/js/locales/common.js?v=20260901-fnb-r1b&amp;session=20260910-r4"></script>
+    <script src="/js/locales/common.js?v=20260911-r5-5&amp;session=20260910-r4"></script>
+    <script src="/js/locales/fnb.js?v=20260911-r5-5"></script>
     <script src="/js/i18n.js?v=20260731-i18n4"></script>
-    <script src="/js/api.js?v=20260901-fnb-r1b&amp;g=20260813-i09-g2h2&amp;session=20260910-r4"></script>
-    <script src="/js/session-device-r4.js?v=20260910-r4-1"></script>
-    <script src="/js/fnb-station-r1b.js?v=20260907-plan2"></script>
-    <script src="/js/pwa.js?v=20260806-pwa"></script>
+    <script src="/js/api.js?v=20260911-r5-5&amp;g=20260813-i09-g2h2&amp;session=20260910-r4"></script>
+    <script src="/js/session-device-r4.js?v=20260911-r5-5"></script>
+    <script src="/js/fnb-station-r1b.js?v=20260911-r5-5"></script>
+    <script src="/js/pwa.js?v=20260911-r5-5"></script>
 </body>
 </html>

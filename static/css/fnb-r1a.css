@@ -295,7 +295,7 @@ body.fnb-page {
 /* R3: operational hierarchy for low-tech table service. */
 body.fnb-page { font-size: 16px; line-height: 1.5; }
 .fnb-page button { font-weight: 700; }
-.fnb-header { grid-template-columns: auto auto minmax(180px, 1fr) auto; }
+.fnb-header { grid-template-columns: auto auto minmax(120px, 1fr) auto auto; }
 .fnb-header h1 { font-size: 1.35rem; font-weight: 700; }
 .fnb-shop-field { justify-self: end; min-width: 0; }
 .fnb-shop-field select { min-width: 150px; }
@@ -359,7 +359,11 @@ body.fnb-page { font-size: 16px; line-height: 1.5; }
 }
 .fnb-order-header h2 { margin: 2px 0 0; }
 .fnb-back-to-floor { flex: 0 0 auto; }
-.fnb-order-layout { height: calc(100% - 68px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 420px); }
+.fnb-order-views { display: none; }
+#fnbOrderConnection { margin: 0; padding: 0 12px; color: #9a3412; }
+#fnbOrderConnection:empty { display: none; }
+.fnb-session-panel:not([hidden]) { display: flex; flex-direction: column; }
+.fnb-order-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 420px); grid-template-rows:minmax(0, 1fr); }
 .fnb-menu-pane { min-width: 0; padding: clamp(16px, 2.5vw, 28px); overflow-y: auto; background: var(--fnb-floor); }
 .fnb-pane-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
 .fnb-pane-heading h3, .fnb-bill-heading h3 { margin: 3px 0 0; font-size: 1.25rem; }
@@ -377,15 +381,15 @@ body.fnb-page { font-size: 16px; line-height: 1.5; }
 .fnb-product-grid button:disabled { border-color: #e2e8f0; background: #eef2f6; }
 .fnb-variant-count { font-size: .8125rem; font-weight: 700; }
 
-.fnb-bill-pane { min-width: 0; display: flex; flex-direction: column; background: #fff; border-left: 1px solid var(--fnb-line); }
+.fnb-bill-pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: #fff; border-left: 1px solid var(--fnb-line); }
 .fnb-bill-scroll { flex: 1 1 auto; min-height: 0; padding: 18px; overflow-y: auto; }
 .fnb-bill-heading { margin-bottom: 13px; }
 .fnb-draft-row { padding: 12px; border-radius: 9px; }
 .fnb-draft-row header strong { font-size: 1rem; }
 .fnb-draft-edit { grid-template-columns: minmax(132px, auto) minmax(0, 1fr); align-items: end; }
-.fnb-draft-edit label > span:not(.sr-only) { display: block; margin-bottom: 4px; color: var(--fnb-muted); font-size: .8125rem; font-weight: 600; }
+.fnb-draft-edit label > span:not(.sr-only):not(.fnb-quantity-stepper) { display: block; margin-bottom: 4px; color: var(--fnb-muted); font-size: .8125rem; font-weight: 600; }
 .fnb-quantity-stepper { display: grid; grid-template-columns: 44px 52px 44px; }
-.fnb-quantity-stepper button { padding: 0; border-radius: 0; background: #fff; color: var(--fnb-ink); border-color: var(--fnb-line); }
+.fnb-quantity-stepper button { grid-column: auto; padding: 0; border-radius: 0; background: #fff; color: var(--fnb-ink); border-color: var(--fnb-line); }
 .fnb-quantity-stepper button:first-child { border-radius: 8px 0 0 8px; }
 .fnb-quantity-stepper button:last-child { border-radius: 0 8px 8px 0; }
 .fnb-quantity-stepper input { min-height: 44px; padding: 0 !important; text-align: center; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -447,7 +451,16 @@ body.fnb-page { font-size: 16px; line-height: 1.5; }
     .fnb-order-header .eyebrow { display: none; }
     .fnb-order-header h2 { font-size: 1.15rem; }
     .fnb-back-to-floor { padding: 8px 10px; }
-    .fnb-order-layout { height: calc(100% - 62px); grid-template-columns: 1fr; grid-template-rows: minmax(290px, 54dvh) minmax(0, 1fr); }
+    .fnb-order-layout { display: flex; flex-direction: column; }
+    .fnb-order-layout > section { flex: 1; min-height: 0; }
+    .fnb-order-layout [hidden] { display: none !important; }
+    .fnb-order-views { display: flex; gap: 6px; padding: 6px 12px; }
+    .fnb-order-views button { flex: 1; min-height: 44px; }
+    .fnb-order-views button[aria-pressed="false"] { background: #fff; color: #1e293b; border-color: #64748b; }
+    .fnb-bill-actions { grid-template-columns: 1fr 1fr; }
+    .fnb-order-header { flex-wrap: wrap; gap: 6px; }
+    .fnb-order-header .ui-tools { margin-left: auto; }
+    #fnbRoleHandoff { font-size: .8125rem; }
     .fnb-menu-pane { padding: 14px; }
     .fnb-pane-heading { align-items: stretch; flex-direction: column; gap: 10px; }
     .fnb-search-field { width: 100%; }
@@ -467,7 +480,7 @@ body.fnb-page { font-size: 16px; line-height: 1.5; }
     .fnb-floor-summary { gap: 8px; }
     .fnb-summary-card { padding: 10px; }
     .fnb-product-grid { gap: 8px; }
-    .fnb-bill-actions { grid-template-columns: 1fr; }
+    .fnb-bill-actions { grid-template-columns: 1fr 1fr; }
     .fnb-bill-actions #fnbCancelSession { grid-column: auto; }
 }
 
@@ -477,3 +490,21 @@ body.fnb-page { font-size: 16px; line-height: 1.5; }
     #fnbCheckoutDialog > * { display: none !important; }
     #fnbReceiptPrint { display: grid !important; gap: 8px; font: 14px/1.45 system-ui, sans-serif; }
 }
+
+@media (max-height: 560px) and (min-width: 761px) and (max-width: 1024px) {
+    .fnb-order-open .fnb-header { display:none; }
+    .fnb-order-open .fnb-session-panel { height:100dvh; min-height:100dvh; }
+    .fnb-order-layout { display:flex; flex-direction:column; }
+    .fnb-order-layout > section { flex:1; min-height:0; }
+    .fnb-order-layout [hidden] { display:none !important; }
+    .fnb-order-views { display:flex; gap:6px; padding:6px 12px; }
+    .fnb-order-views button { flex:1; min-height:44px; }
+}
+
+.fnb-page.fnb-order-open { display:flex; flex-direction:column; height:100dvh; min-height:0; }
+.fnb-page.fnb-order-open > .fnb-header { flex:none; }
+.fnb-page.fnb-order-open > .fnb-shell { display:flex; flex:1; min-height:0; height:auto; }
+.fnb-page.fnb-order-open .fnb-session-panel { flex:1; min-height:0; height:auto; }
+#fnbSend { min-height:48px; }
+#fnbOrderMutationStatus { margin:0; padding:0 12px; color:#9a3412; }
+#fnbOrderMutationStatus:empty { display:none; }

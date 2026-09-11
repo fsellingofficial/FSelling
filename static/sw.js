@@ -32,7 +32,7 @@
 
 // Doi so nay khi muon xoa sach cache cua moi nguoi dung (vi du sau khi sua mot
 // loi lien quan toi cache). Doi so = moi cache cu bi xoa o buoc activate.
-const PHIEN_BAN = 'v2-i09-g2h8';
+const PHIEN_BAN = 'v3-device-r5';
 const CACHE_VO = `fselling-vo-${PHIEN_BAN}`;      // khung app, nap san luc cai
 const CACHE_CHAY = `fselling-chay-${PHIEN_BAN}`;  // file gap gi cache nay
 const CACHE_HOP_LE = [CACHE_VO, CACHE_CHAY];
@@ -42,7 +42,11 @@ const CACHE_HOP_LE = [CACHE_VO, CACHE_CHAY];
 // Chung duoc cache khi dung toi lan dau (xem phan fetch ben duoi).
 const KHUNG_APP = [
     '/',
+    '/offline.html',
     '/pos',
+    '/fnb',
+    '/fnb/station/kitchen',
+    '/fnb/station/bar',
     '/seller',
     '/admin',
     '/register',
@@ -64,9 +68,7 @@ self.addEventListener('install', (su_kien) => {
         // Nap tung file mot va BO QUA file loi. Dung cache.addAll thi chi can
         // MOT dia chi hong la ca buoc cai that bai va SW khong bao gio chay.
         await Promise.allSettled(KHUNG_APP.map((dia_chi) => kho.add(dia_chi)));
-        // Cho ban moi thay ban cu ngay, khong doi dong het tab. An toan vi JS
-        // cua trang dang mo da nam trong bo nho, khong bi doi giua chung.
-        await self.skipWaiting();
+        // Wait until existing clients close; never replace a worker during a sale.
     })());
 });
 
@@ -74,9 +76,8 @@ self.addEventListener('activate', (su_kien) => {
     su_kien.waitUntil((async () => {
         const ten = await caches.keys();
         await Promise.all(
-            ten.filter((t) => !CACHE_HOP_LE.includes(t)).map((t) => caches.delete(t))
+            ten.filter((t) => /^fselling-(vo|chay)-/.test(t) && !CACHE_HOP_LE.includes(t)).map((t) => caches.delete(t))
         );
-        await self.clients.claim();
     })());
 });
 
@@ -111,7 +112,7 @@ async function cache_truoc(yeu_cau) {
  *   bang `fetch()`, chi lo ra khi dieu huong that.
  *
  * Nen: khong khop y nguyen thi bo qua phan `?query` (cung mot trang), van
- * khong co thi lui ve khung app `/`. Chi ap dung cho dieu huong - file le
+ * khong co thi hien thong tin can ket noi `/offline.html`. Chi ap dung cho dieu huong - file le
  * (CSS/JS/anh) van phai khop chinh xac, vi `?v=` o do la de PHAN BIET phien
  * ban, bo qua no la phuc vu dung ban cu ma minh vua cong suc chan.
  */
@@ -123,7 +124,7 @@ async function mang_truoc(yeu_cau, la_trang) {
     } catch (loi) {
         let co_san = await caches.match(yeu_cau);
         if (!co_san && la_trang) co_san = await caches.match(yeu_cau, { ignoreSearch: true });
-        if (!co_san && la_trang) co_san = await caches.match('/');
+        if (!co_san && la_trang) co_san = await caches.match('/offline.html');
         if (co_san) return co_san;
         throw loi;
     }

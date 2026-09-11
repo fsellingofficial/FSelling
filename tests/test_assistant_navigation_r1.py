@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "20260825-assistant-guided-tasks-r1-1"
+VERSION = "20260911-r5-5"
 
 
 def _read(path: str) -> str:

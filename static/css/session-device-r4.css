@@ -1,19 +1,18 @@
 .session-device-launcher {
-    position: fixed;
-    right: 1rem;
-    bottom: 1rem;
-    z-index: 1200;
+    position: static;
+    min-height: 44px;
 }
 
 .session-device-dialog {
+    margin: auto;
     width: min(42rem, calc(100vw - 2rem));
     max-height: calc(100vh - 2rem);
     overflow: auto;
     border: 1px solid #475569;
     border-radius: .75rem;
     padding: 1rem;
-    color: inherit;
-    background: #0f172a;
+    color: #1e293b;
+    background: #fff;
 }
 
 .session-device-dialog::backdrop { background: rgb(15 23 42 / 70%); }
@@ -24,11 +23,15 @@
 .session-device-list { display: grid; gap: .75rem; }
 .session-device-card { border: 1px solid #475569; border-radius: .5rem; padding: .75rem; }
 .session-device-field { margin: .35rem 0; }
-.session-device-current { margin-left: .5rem; font-size: .75rem; color: #22c55e; }
+.session-device-current { margin-left: .5rem; font-size: .75rem; color: #166534; }
 .session-device-actions { flex-wrap: wrap; margin-top: .75rem; }
 .session-device-rename { display: flex; gap: .5rem; align-items: end; margin-top: .75rem; }
 .session-device-rename label { flex: 1; }
-.session-device-rename input { width: 100%; }
+.session-device-rename input { width: 100%; color: #1e293b; background: #fff; }
+.session-device-dialog button { min-height: 44px; color: #1e293b; background: #f1f5f9; border: 1px solid #64748b; border-radius: .4rem; padding: .5rem .75rem; }
+.session-device-dialog button:disabled { opacity: .6; }
+.session-device-dialog :focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+.session-device-card { overflow-wrap: anywhere; }
 .session-device-confirm { margin-top: .75rem; }
 .session-device-confirm p { margin: 0 0 .5rem; }
 .session-device-confirm button { margin-right: .5rem; }

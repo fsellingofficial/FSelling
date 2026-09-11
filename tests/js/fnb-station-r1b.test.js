@@ -10,6 +10,28 @@ function queue(revision = 3) {
 }
 
 async function run() {
+    let mode = 'ok'; const events = [];
+    const freshness = createStationController({
+        request: async () => { if (mode === 'down') throw Error('offline'); return mode === 'same' ? {changed:false} : queue(); },
+        render: e => events.push(e), setTimeoutFn:()=>1, clearTimeoutFn:()=>{}
+    });
+    await freshness.start(1,'KITCHEN');
+    mode='down'; await assert.rejects(freshness.load());
+    mode='same'; await freshness.load();
+    assert.equal(events.at(-1).type,'synced');
+    assert.ok(freshness.getState().lastReadAt > 0);
+    for (const [status, unknown] of [[403,false],[409,false],[401,true],[200,true],[503,true]]) {
+        const sent=[];
+        const c=createStationController({
+            request: async (_,method,body)=>{ if(method!=='POST') return queue(); sent.push(body); throw Object.assign(Error('rejected'),{status,mutationOutcomeUnknown:unknown}); },
+            render:()=>{}, uuid:()=> 'stable', setTimeoutFn:()=>1,clearTimeoutFn:()=>{}
+        });
+        await c.start(1,'KITCHEN');
+        await assert.rejects(c.transition(7,'start'));
+        await c.load();
+        assert.equal(Boolean(c.getState().pending),unknown);
+        if(unknown) { await assert.rejects(c.retryPending()); assert.deepEqual(sent[0],sent[1]); }
+    }
     assert.equal(ticketAgeMinutes('2026-09-03T10:00:00Z', Date.parse('2026-09-03T10:05:59Z')), 5);
     assert.equal(ticketAgeClass(4), '');
     assert.equal(ticketAgeClass(5), 'is-warn');
@@ -31,7 +53,7 @@ async function run() {
         isHidden: () => false,
     });
     await controller.start(1, 'KITCHEN');
-    assert.equal(renders.at(-1).type, 'queue');
+    assert.equal(renders.find(e => e.type === 'queue').value.tickets[0].id, 7);
     await controller.transition(7, 'start');
     assert.equal(calls[1].endpoint, '/fnb/tickets/7/start');
     assert.equal(calls[1].body.expected_state_version, 0);

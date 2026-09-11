@@ -1938,3 +1938,9 @@ body.seller-page {
 }
 
 .staff-role-help { margin: 0 0 1rem; padding-left: 1.25rem; }
+
+.seller-quick-actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+.seller-quick-actions[hidden], #dashboardStatsValues[hidden], #dashboardStatsCharts[hidden] { display:none; }
+.seller-quick-actions button { min-height:44px; flex:1 1 130px; }
+.chart-card, .chart-container, .seller-main { min-width:0; }
+#dashboardStatsStatus, #dashboardOrdersStatus { color:#475569; }

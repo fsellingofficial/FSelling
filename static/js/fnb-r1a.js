@@ -314,7 +314,7 @@
 
         function isDefinitive4xx(error) {
             const status = Number(error?.status);
-            return status >= 400 && status < 500;
+            return !error?.mutationOutcomeUnknown && status >= 400 && status < 500;
         }
 
         function errorCode(error) {
@@ -414,6 +414,13 @@
                             error,
                             attempt,
                         });
+                        throw error;
+                    }
+                    if (definitive && Number(error.status) === 403) {
+                        clearDraft();
+                        state.recoverableDraft = null;
+                        state.recoverableAction = null;
+                        deps.render({ type: 'permission-error', error });
                         throw error;
                     }
                     if (
@@ -775,7 +782,8 @@
             'fnbAreaForm', 'fnbAreaName', 'fnbTableForm', 'fnbTableArea', 'fnbTableName',
             'fnbSessionPanel', 'fnbSessionBackdrop', 'fnbSessionClose', 'fnbSessionTitle',
             'fnbProductSearch', 'fnbCategoryTabs', 'fnbProductGrid', 'fnbDraftLines', 'fnbSentLines', 'fnbSubtotal',
-            'fnbServiceTickets',
+            'fnbServiceTickets', 'fnbOrderConnection', 'fnbOrderMutationStatus', 'fnbViewMenu', 'fnbViewBill', 'fnbViewSent',
+            'fnbMenuPane', 'fnbBillPane', 'fnbDraftPane', 'fnbSentPane',
             'fnbVariantDialog', 'fnbVariantTitle', 'fnbVariantHint', 'fnbVariantList',
             'fnbConflict', 'fnbSessionStatus', 'fnbTableActions', 'fnbTargetTable', 'fnbMergeTable',
             'fnbCancelSession', 'fnbSend', 'fnbStationList', 'fnbPinForm', 'fnbManagerPin',
@@ -802,12 +810,37 @@
         let pendingCancelLineId = null;
         let pendingCancelSessionRevision = null;
         let approvalDialogGeneration = 0;
+        let pinRequestGeneration = 0;
         let selectedCheckId = null;
         let customers = [];
         let lastPaymentResult = null;
         let visibleMenuEntries = [];
         let selectedVariantEntry = null;
         let lastVariantTrigger = null;
+
+        const compactOrder = global.matchMedia?.('(max-width: 760px), (max-height: 560px) and (max-width: 1024px)');
+        let orderView = 'menu';
+        let orderSessionId = null;
+        const viewScroll = {};
+        function setOrderView(view) {
+            if (!['menu', 'bill', 'sent'].includes(view)) return;
+            viewScroll[orderView] = [elements.fnbMenuPane.scrollTop, elements.fnbBillPane.querySelector('.fnb-bill-scroll')?.scrollTop || 0];
+            orderView = view;
+            elements.fnbSessionPanel.dataset.orderView = view;
+            const compact = Boolean(compactOrder?.matches);
+            for (const [node, visible] of [[elements.fnbMenuPane, view === 'menu'], [elements.fnbBillPane, view !== 'menu'], [elements.fnbDraftPane, view === 'bill'], [elements.fnbSentPane, view === 'sent']]) {
+                node.hidden = compact && !visible;
+                node.inert = compact && !visible;
+            }
+            for (const [key, node] of [['menu',elements.fnbViewMenu],['bill',elements.fnbViewBill],['sent',elements.fnbViewSent]]) node.setAttribute('aria-pressed', String(key === view));
+            elements.fnbMenuPane.scrollTop = viewScroll[view]?.[0] || 0;
+            const scroll = elements.fnbBillPane.querySelector('.fnb-bill-scroll');
+            if (scroll) scroll.scrollTop = viewScroll[view]?.[1] || 0;
+        }
+        elements.fnbViewMenu.addEventListener('click', () => setOrderView('menu'));
+        elements.fnbViewBill.addEventListener('click', () => setOrderView('bill'));
+        elements.fnbViewSent.addEventListener('click', () => setOrderView('sent'));
+        compactOrder?.addEventListener('change', () => setOrderView(orderView));
 
         const storage = {
             get: key => sessionStorage.getItem(key),
@@ -822,6 +855,7 @@
 
         function live(key, options) {
             elements.fnbLiveStatus.textContent = key ? t(key, options) : '';
+            elements.fnbOrderConnection.textContent = elements.fnbLiveStatus.textContent;
         }
 
         function setupStatus(message) {
@@ -830,6 +864,7 @@
 
         function sessionStatus(message) {
             elements.fnbSessionStatus.textContent = message || '';
+            elements.fnbOrderMutationStatus.textContent = message || '';
         }
 
         function serviceBlockerCount(value = controller.getState().session) {
@@ -838,6 +873,7 @@
         }
 
         function showPendingRecovery() {
+            setOrderView('bill');
             elements.fnbConflict.hidden = false;
             elements.fnbConflict.innerHTML = `<p>${escapeHtml(t('fnb.state.pending_retry'))}</p><button type="button" data-action="retry-pending">${escapeHtml(t('fnb.action.retry_pending'))}</button>`;
         }
@@ -1024,6 +1060,7 @@
 
         function renderSession(value, draft) {
             if (!value) return;
+            if (orderSessionId !== value.id) { orderSessionId = value.id; Object.keys(viewScroll).forEach(key => delete viewScroll[key]); setOrderView('menu'); }
             document.body.classList.add('fnb-order-open');
             elements.fnbSessionPanel.hidden = false;
             elements.fnbSessionPanel.inert = false;
@@ -1054,6 +1091,7 @@
             elements.fnbSubtotal.textContent = t('fnb.session.total', { amount: money(value.subtotal_vnd) });
             elements.fnbTableActions.hidden = !roleCapabilities.service;
             elements.fnbCancelSession.disabled = Number(value.subtotal_vnd || 0) > 0;
+            elements.fnbCancelSession.hidden = Number(value.subtotal_vnd || 0) > 0;
             elements.fnbSend.disabled = Number(value.unsent_quantity || 0) <= 0 || Boolean(pending);
             const sentQuantity = buckets.sent.reduce((sum, line) => sum + Number(line.active_sent_quantity || 0), 0);
             elements.fnbCheckoutOpen.disabled = sentQuantity <= 0 || Number(value.unsent_quantity || 0) > 0 || Boolean(pending);
@@ -1186,7 +1224,7 @@
                 elements.fnbRetry.hidden = true;
                 elements.fnbRefreshNote.hidden = true;
                 live('');
-            } else if (event.type === 'floor-error') {
+            } else if (event.type === 'floor-error' || event.type === 'permission-error') {
                 if (Number(event.error?.status) === 403) {
                     controller.dispose();
                     elements.fnbFloor.innerHTML = '';
@@ -1288,7 +1326,13 @@
         }
 
         const controller = createController({
-            request: (endpoint, method, body) => apiCall(endpoint, method, body),
+            request: (endpoint, method, body) => apiCall(endpoint, method, body, {
+                timeoutMs: !method || method === 'GET' ? 15000 : 30000, slowAfterMs: 10000,
+                onSlow: () => { if (!controller.getState().disposed) {
+                    if (!method || method === 'GET') live('common.request.slow');
+                    else sessionStatus(t('common.request.slow'));
+                } }
+            }),
             render: renderer,
             setTimeoutFn: (callback, delay) => setTimeout(callback, delay),
             clearTimeoutFn: timer => clearTimeout(timer),
@@ -1517,7 +1561,10 @@
             (lastVariantTrigger?.isConnected ? lastVariantTrigger : elements.fnbProductSearch).focus();
         });
         elements.fnbProductSearch.addEventListener('input', renderProducts);
-        elements.fnbShopSelect.addEventListener('change', event => chooseShop(Number(event.target.value)));
+        elements.fnbShopSelect.addEventListener('change', event => {
+            pinRequestGeneration++;
+            chooseShop(Number(event.target.value));
+        });
         elements.fnbCancelSession.addEventListener('click', () => controller.cancelSession().catch(error => sessionStatus(error.message)));
         elements.fnbSend.addEventListener('click', () => controller.sendSession()
             .then(() => roleCapabilities.checkout ? controller.loadChecks() : undefined)
@@ -1621,12 +1668,19 @@
         });
         elements.fnbPinForm.addEventListener('submit', event => {
             event.preventDefault();
-            apiCall(`/fnb/shops/${Number(elements.fnbShopSelect.value)}/manager-pin`, 'PATCH', {
+            const shopId = Number(elements.fnbShopSelect.value);
+            const attempt = ++pinRequestGeneration;
+            const current = () => attempt === pinRequestGeneration && shopId === Number(elements.fnbShopSelect.value);
+            apiCall(`/fnb/shops/${shopId}/manager-pin`, 'PATCH', {
                 pin: elements.fnbManagerPin.value,
+            }, {
+                timeoutMs: 30000, slowAfterMs: 10000,
+                onSlow: () => { if (current()) setupStatus(t('common.request.slow')); },
             }).then(() => {
+                if (!current()) return;
                 elements.fnbManagerPin.value = '';
                 setupStatus(t('fnb.pin.saved'));
-            }).catch(error => setupStatus(error.message));
+            }).catch(error => { if (current()) setupStatus(error.message); });
         });
         elements.fnbApprovalForm.addEventListener('submit', async event => {
             event.preventDefault();
@@ -1659,6 +1713,13 @@
                     pin,
                     action: 'CANCEL_SENT_LINE', entity_type: 'SESSION',
                     entity_id: sessionId, revision: sessionRevision,
+                }, {
+                    timeoutMs: 30000, slowAfterMs: 10000,
+                    onSlow: () => {
+                        if (approvalAttempt === approvalDialogGeneration) {
+                            elements.fnbApprovalStatus.textContent = t('common.request.slow');
+                        }
+                    },
                 });
                 if (approvalAttempt !== approvalDialogGeneration) return;
                 const latest = controller.getState().session;

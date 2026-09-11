@@ -15,7 +15,7 @@
     }
 
     function createStationController(deps) {
-        const state = { shopId: null, station: null, revision: null, tickets: [], pending: null, timer: null, requestEpoch: 0, disposed: false };
+        const state = { shopId: null, station: null, revision: null, tickets: [], pending: null, lastReadAt: null, timer: null, requestEpoch: 0, disposed: false };
         let pendingPromise = null;
         const uuid = () => deps.uuid?.() || global?.crypto?.randomUUID?.() || `ticket-${Date.now()}`;
         const delay = () => deps.isHidden?.() ? 10_000 : 2_000;
@@ -38,6 +38,8 @@
                     state.tickets = result.tickets || [];
                     deps.render({ type: 'queue', value: result });
                 }
+                state.lastReadAt = Date.now();
+                deps.render({ type: 'synced', at: state.lastReadAt });
                 return result;
             } catch (error) {
                 if (state.disposed || epoch !== state.requestEpoch || shopId !== state.shopId || station !== state.station) return;
@@ -67,7 +69,7 @@
                     deps.render({ type: 'queue', value: { tickets: state.tickets, revision: state.revision } });
                     return result;
                 } catch (error) {
-                    if (Number(error?.status) >= 400 && Number(error?.status) < 500) state.pending = null;
+                    if (!error?.mutationOutcomeUnknown && Number(error?.status) >= 400 && Number(error?.status) < 500) state.pending = null;
                     else if (state.pending) state.pending.inFlight = false;
                     pendingPromise = null;
                     deps.render({ type: 'transition-error', error });
@@ -146,6 +148,9 @@
         const title = document.getElementById('fnbStationTitle');
         const list = document.getElementById('fnbStationTickets');
         const status = document.getElementById('fnbStationStatus');
+        const mutationStatus = document.getElementById('fnbStationMutationStatus');
+        let readFailed = false;
+        const tr = key => t('fnb.station.' + key);
         const connection = document.getElementById('fnbStationConnection');
         const shopSelect = document.getElementById('fnbStationShop');
         const retry = document.getElementById('fnbStationRetry');
@@ -153,22 +158,22 @@
         const stockForm = document.getElementById('fnbOutOfStockForm');
         const stockReason = document.getElementById('fnbOutOfStockReason');
         let pendingStockTicketId = null;
-        title.textContent = station === 'KITCHEN' ? 'Bếp đang chờ' : 'Bar đang chờ';
+        title.textContent = tr(station === 'KITCHEN' ? 'kitchen' : 'bar');
 
         function ticketCard(ticket) {
             const minutes = ticketAgeMinutes(ticket.created_at);
             const primary = ticket.out_of_stock_reason
-                ? '<button type="button" data-action="resume">Tiếp tục chế biến</button>'
+                ? `<button type="button" data-action="resume">${escapeHtml(tr('resume'))}</button>`
                 : ticket.status === 'NEW'
-                    ? '<button type="button" data-action="start">Nhận làm</button>'
-                    : '<button type="button" data-action="done">Sẵn sàng giao</button>';
+                    ? `<button type="button" data-action="start">${escapeHtml(tr('start'))}</button>`
+                    : `<button type="button" data-action="done">${escapeHtml(tr('done'))}</button>`;
             const stock = ticket.out_of_stock_reason
-                ? '' : '<button type="button" class="fnb-secondary" data-action="out-of-stock">Báo hết món</button>';
-            return `<article class="fnb-ticket-card ${ticketAgeClass(minutes)}" data-ticket-id="${Number(ticket.id)}" data-created-at="${escapeHtml(ticket.created_at || '')}"><header><div><span class="fnb-ticket-number">Phiếu #${Number(ticket.sequence)}</span><h3>${escapeHtml((ticket.tables || []).join(' + '))}</h3></div><span class="fnb-ticket-time">${minutes} phút</span></header><ul>${(ticket.items || []).map(item => `<li><strong class="fnb-ticket-quantity">${Number(item.quantity)}×</strong><span class="fnb-ticket-item">${escapeHtml(item.product_name)}</span>${item.note ? `<span class="fnb-ticket-note">${escapeHtml(item.note)}</span>` : ''}</li>`).join('')}</ul>${ticket.out_of_stock_reason ? `<p class="fnb-ticket-warning">Hết món: ${escapeHtml(ticket.out_of_stock_reason)}</p>` : ''}<footer>${primary}${stock}</footer></article>`;
+                ? '' : `<button type="button" class="fnb-secondary" data-action="out-of-stock">${escapeHtml(tr('stock'))}</button>`;
+            return `<article class="fnb-ticket-card ${ticketAgeClass(minutes)}" data-ticket-id="${Number(ticket.id)}" data-created-at="${escapeHtml(ticket.created_at || '')}"><header><div><span class="fnb-ticket-number">${escapeHtml(tr('ticket'))} #${Number(ticket.sequence)}</span><h3>${escapeHtml((ticket.tables || []).join(' + '))}</h3></div><span class="fnb-ticket-time">${minutes} ${tr('minutes')}</span></header><ul>${(ticket.items || []).map(item => `<li><strong class="fnb-ticket-quantity">${Number(item.quantity)}×</strong><span class="fnb-ticket-item">${escapeHtml(item.product_name)}</span>${item.note ? `<span class="fnb-ticket-note">${escapeHtml(item.note)}</span>` : ''}</li>`).join('')}</ul>${ticket.out_of_stock_reason ? `<p class="fnb-ticket-warning">${escapeHtml(tr('stock'))}: ${escapeHtml(ticket.out_of_stock_reason)}</p>` : ''}<footer>${primary}${stock}</footer></article>`;
         }
 
         function ticketLane(label, tickets) {
-            return `<section class="fnb-ticket-lane"><header><h2>${label}</h2><span class="fnb-ticket-count">${tickets.length}</span></header><div class="fnb-ticket-list">${tickets.length ? tickets.map(ticketCard).join('') : '<p class="fnb-lane-empty">Không có phiếu</p>'}</div></section>`;
+            return `<section class="fnb-ticket-lane"><header><h2 tabindex="-1">${label}</h2><span class="fnb-ticket-count">${tickets.length}</span></header><div class="fnb-ticket-list">${tickets.length ? tickets.map(ticketCard).join('') : `<p class="fnb-lane-empty">${escapeHtml(tr('empty'))}</p>`}</div></section>`;
         }
 
         function refreshTicketTimers() {
@@ -177,53 +182,63 @@
                 card.classList.remove('is-warn', 'is-late');
                 const ageClass = ticketAgeClass(minutes);
                 if (ageClass) card.classList.add(ageClass);
-                card.querySelector('.fnb-ticket-time').textContent = `${minutes} phút`;
+                card.querySelector('.fnb-ticket-time').textContent = `${minutes} ${tr('minutes')}`;
             });
         }
 
         function render(event) {
+            if (!localStorage.getItem('token')) return;
             if (event.type === 'loading') {
-                retry.hidden = true;
+                readFailed = false;
                 connection.className = 'fnb-live-badge is-syncing';
-                connection.textContent = '● Đang cập nhật';
-                status.textContent = 'Đang tải phiếu…';
-                list.innerHTML = '<div class="fnb-skeleton" aria-hidden="true"></div><div class="fnb-skeleton" aria-hidden="true"></div>';
+                connection.textContent = tr('loading');
+                status.textContent = tr('loading');
+                mutationStatus.textContent = '';
+                list.innerHTML = '<div class="fnb-skeleton" aria-hidden="true"></div>';
             } else if (event.type === 'queue') {
-                retry.hidden = true;
-                retry.dataset.mode = 'load';
-                connection.className = 'fnb-live-badge is-online';
-                connection.textContent = `● Đã đồng bộ ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
-                status.textContent = '';
+                const focused = document.activeElement;
+                const id = focused?.closest?.('[data-ticket-id]')?.dataset.ticketId;
+                const action = focused?.dataset?.action;
                 const tickets = event.value.tickets || [];
-                const fresh = tickets.filter(ticket => ticket.status === 'NEW');
-                const doing = tickets.filter(ticket => ticket.status === 'IN_PROGRESS');
-                list.innerHTML = ticketLane('Mới', fresh) + ticketLane('Đang làm', doing);
+                list.innerHTML = ticketLane(tr('new'), tickets.filter(row => row.status === 'NEW'))
+                    + ticketLane(tr('doing'), tickets.filter(row => row.status === 'IN_PROGRESS'));
+                if (id && action) {
+                    const replacement = list.querySelector(`[data-ticket-id="${Number(id)}"] [data-action="${action}"]`);
+                    (replacement || list.querySelector('h2'))?.focus();
+                }
+                if (!controller.getState().pending) mutationStatus.textContent = '';
+            } else if (event.type === 'synced') {
+                readFailed = false;
+                connection.className = 'fnb-live-badge is-online';
+                connection.textContent = tr('synced') + ' ' + new Date(event.at).toLocaleTimeString(currentLanguage(), {hour:'2-digit',minute:'2-digit'});
+                status.textContent = '';
             } else if (event.type === 'pending') {
-                status.textContent = 'Đang cập nhật phiếu…';
-                list.querySelectorAll('button[data-action]').forEach(button => { button.disabled = true; });
+                mutationStatus.textContent = tr('pending');
             } else if (event.type === 'blocked' || event.type === 'transition-error') {
-                retry.hidden = false;
-                retry.dataset.mode = 'mutation';
-                retry.textContent = 'Thử lại thao tác đang chờ';
+                mutationStatus.textContent = controller.getState().pending
+                    ? tr('unknown') : (event.error?.message || tr('rejected'));
+                if (!controller.getState().pending) readFailed = true;
+            } else if (event.type === 'error') {
+                readFailed = true;
                 connection.className = 'fnb-live-badge is-stale';
-                connection.textContent = navigator.onLine ? '● Chưa xác định kết quả' : '● Mất kết nối';
-                status.textContent = 'Kiểm tra phiếu rồi chỉ bấm thử lại nếu thao tác chưa được ghi nhận.';
-                list.querySelectorAll('button[data-action]').forEach(button => { button.disabled = false; });
-            } else {
-                retry.hidden = false;
-                retry.dataset.mode = 'load';
-                retry.textContent = 'Thử tải lại';
-                connection.className = 'fnb-live-badge is-stale';
-                connection.textContent = navigator.onLine ? '● Dữ liệu có thể cũ' : '● Mất kết nối';
-                status.textContent = navigator.onLine
-                    ? 'Chưa cập nhật được phiếu. Thử lại hoặc đăng nhập lại nếu phiên đã hết.'
-                    : 'Đang mất kết nối. Phiếu gần nhất vẫn được giữ.';
-                if (!event.hasData) list.innerHTML = '<section class="fnb-empty"><h2>Chưa tải được phiếu</h2><p>Kiểm tra mạng rồi bấm Thử lại.</p></section>';
+                connection.textContent = navigator.onLine ? tr('stale') : tr('offline');
+                status.textContent = tr('read_error');
+                if (!event.hasData) list.innerHTML = `<p class="fnb-empty">${escapeHtml(tr('read_error'))}</p>`;
             }
+            const pending = controller.getState().pending;
+            list.querySelectorAll('button[data-action]').forEach(button => { button.disabled = Boolean(pending); });
+            shopSelect.disabled = Boolean(pending);
+            retry.hidden = !pending && !readFailed;
+            retry.disabled = Boolean(pending?.inFlight);
+            retry.dataset.mode = pending ? 'mutation' : 'load';
+            retry.textContent = pending ? tr('retry_mutation') : tr('retry_read');
         }
 
         const controller = createStationController({
-            request: (endpoint, method, body) => apiCall(endpoint, method, body),
+            request: (endpoint, method, body) => apiCall(endpoint, method, body, {
+                timeoutMs: method === 'GET' ? 15000 : 30000, slowAfterMs: 10000,
+                onSlow: () => { if (!controller.getState().disposed) (method === 'GET' ? status : mutationStatus).textContent = t('common.request.slow'); }
+            }),
             render,
             setTimeoutFn: (callback, wait) => setTimeout(callback, wait),
             clearTimeoutFn: timer => clearTimeout(timer),
@@ -264,9 +279,7 @@
         shopSelect.addEventListener('change', () => controller.start(Number(shopSelect.value), station).catch(() => {}));
         global.addEventListener('online', () => controller.load(true).catch(() => {}));
         global.addEventListener('offline', () => {
-            connection.className = 'fnb-live-badge is-stale';
-            connection.textContent = '● Mất kết nối';
-            status.textContent = 'Đang mất kết nối. Phiếu gần nhất vẫn được giữ.';
+            render({type:'error',hasData:controller.getState().tickets.length > 0});
         });
         const clock = global.setInterval(refreshTicketTimers, 30_000);
         global.addEventListener('pagehide', () => {
@@ -274,12 +287,12 @@
             controller.dispose();
         }, { once: true });
 
-        apiCall('/shops').then(shops => {
+        apiCall('/shops', 'GET', null, {timeoutMs:15000}).then(shops => {
             const available = (shops || []).filter(shop => shop.is_active !== false && shop.fnb_enabled);
             shopSelect.innerHTML = available.map(shop => `<option value="${Number(shop.id)}">${escapeHtml(shop.name)}</option>`).join('');
             const saved = Number(localStorage.getItem('currentShopId'));
             const selected = available.find(shop => Number(shop.id) === saved) || available[0];
-            if (!selected) return render({ type: 'error', error: new Error('Chưa có cửa hàng bật bán tại bàn.') });
+            if (!selected) return render({ type: 'error', error: new Error(tr('no_shop')) });
             shopSelect.value = String(selected.id);
             controller.start(selected.id, station).catch(() => {});
         }).catch(error => render({ type: 'error', error }));

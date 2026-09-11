@@ -457,7 +457,7 @@ function xoaMovementDangDo(state = pendingMovementState) {
 }
 
 function laLoi4xx(error) {
-    return Number(error?.status) >= 400 && Number(error?.status) < 500;
+    return !error?.mutationOutcomeUnknown && Number(error?.status) >= 400 && Number(error?.status) < 500;
 }
 
 function currentShopHasTransferAccount() {
@@ -595,7 +595,7 @@ document.getElementById('btnTableService')?.addEventListener('click', openTableS
 async function loadProducts() {
     if(!currentShopId) return;
     try {
-        const res = await apiCall(`/products/${currentShopId}`);
+        const res = await apiCall(`/products/${currentShopId}`, 'GET', null, posRequestUi());
         products = res.filter(p => p.is_active !== false && p.category_is_active !== false);
         filterAndRenderProducts();
         // Chụp lại danh mục để còn bán được khi mất mạng. Không có bản chụp thì
@@ -624,7 +624,7 @@ async function loadProducts() {
 async function loadCategories() {
     if(!currentShopId) return;
     try {
-        const res = await apiCall(`/categories/${currentShopId}`);
+        const res = await apiCall(`/categories/${currentShopId}`, 'GET', null, posRequestUi());
         categories = res.filter(c => c.is_active !== false);
         renderCategories();
     } catch (e) { console.error(e); }
@@ -1474,7 +1474,7 @@ function dongGioHangMobile(traFocus = true) {
 }
 
 function moGioHangMobile() {
-    if (!posMobileCartMedia.matches || !cart.length) return;
+    if (!posMobileCartMedia.matches || (!cart.length && !duLieuHoaDonHienTai)) return;
     const checkout = document.getElementById('posCheckoutColumn');
     const backdrop = document.getElementById('posCartBackdrop');
     const dock = document.getElementById('posCartDock');
@@ -1496,14 +1496,15 @@ function capNhatGioHangResponsivePOS() {
     );
     const empty = cart.length === 0 && !receiptVisible;
     checkout?.classList.toggle('is-cart-empty', empty);
+    checkout?.classList.toggle('has-receipt', receiptVisible);
 
     if (dock) {
-        dock.hidden = cart.length === 0;
-        document.getElementById('posCartDockCount').innerText = dich(
+        dock.hidden = empty;
+        document.getElementById('posCartDockCount').innerText = receiptVisible ? dich('pos.receipt.region_label') : dich(
             'pos.cart.mobile_count',
             { count: dinhDangSoPOS(count) }
         );
-        document.getElementById('posCartDockTotal').innerText = dinhDangTien(total);
+        document.getElementById('posCartDockTotal').innerText = dinhDangTien(receiptVisible ? duLieuHoaDonHienTai.total_amount : total);
     }
 
     if (!posMobileCartMedia.matches) {
@@ -1542,12 +1543,12 @@ function updateUI() {
                     <div class="cart-donGia">${escapeHtml(dinhDangTien(item.price))} × ${dinhDangSoPOS(item.quantity)}</div>
                 </div>
                 <div class="cart-o-sl" style="display: flex; gap: 0.3rem; align-items: center; color: white;">
-                    <button class="btn-qty" onclick="updateQty(${index}, -1)">-</button>
+                    <button class="btn-qty" onclick="updateQty(${index}, -1)" aria-label="${escapeHtml(dich('pos.cart.decrease') + ' ' + item.product_name)}">-</button>
                     <span>${item.quantity}</span>
-                    <button class="btn-qty" onclick="updateQty(${index}, 1)">+</button>
+                    <button class="btn-qty" onclick="updateQty(${index}, 1)" aria-label="${escapeHtml(dich('pos.cart.increase') + ' ' + item.product_name)}">+</button>
                 </div>
                 <div class="cart-thanhTien cart-o-tien">${escapeHtml(dinhDangTien(thanhTien))}</div>
-                <button class="btn-del cart-o-xoa" onclick="removeItem(${index})"><i class="ph ph-trash"></i></button>
+                <button class="btn-del cart-o-xoa" onclick="removeItem(${index})" aria-label="${escapeHtml(dich('common.delete') + ' ' + item.product_name)}"><i class="ph ph-trash"></i></button>
             </div>
         `;
     });
@@ -1844,7 +1845,7 @@ function renderCashQuickAmounts() {
         }))
     ];
     box.innerHTML = choices.map(({ amount, label }) => `
-        <button type="button" onclick="datTienKhachDua(${amount})">${label}</button>
+        <button type="button" onclick="datTienKhachDua(${amount})" ${pendingCheckoutState?.cash_pay_payload ? 'disabled' : ''}>${label}</button>
     `).join('');
 }
 
@@ -1854,7 +1855,12 @@ function datTienKhachDua(amount) {
 
 function capNhatTienKhachDua() {
     const input = document.getElementById('cashTenderedInput');
-    cashTenderedAmount = input ? docGiaTriTien(input.value) : 0;
+    const fixedTender = pendingCheckoutState?.cash_pay_payload?.tendered_amount;
+    cashTenderedAmount = fixedTender ?? (input ? docGiaTriTien(input.value) : 0);
+    if (input) {
+        input.disabled = fixedTender !== undefined;
+        if (fixedTender !== undefined) input.value = dinhDangSoPOS(fixedTender);
+    }
     if (pendingCheckoutState?.payment_method === 'cash') {
         pendingCheckoutState.tendered_amount = cashTenderedAmount;
         luuCheckoutDangDo(pendingCheckoutState);
@@ -1875,7 +1881,23 @@ function capNhatTienKhachDua() {
     capNhatNutCheckout();
 }
 
+function posRequestUi(method = 'GET') {
+    return { timeoutMs: method === 'GET' ? 15000 : 30000, slowAfterMs: 10000,
+        onSlow: () => { const status = document.getElementById('posCheckoutStatus'); if (status) status.textContent = dich('common.request.slow'); }
+    };
+}
+
 function capNhatNutCheckout() {
+    const tenderInput = document.getElementById('cashTenderedInput');
+    if (tenderInput) tenderInput.disabled = checkoutBusy || Boolean(pendingCheckoutState?.cash_pay_payload);
+    document.querySelectorAll('#cashQuickAmounts button').forEach(button => {
+        button.disabled = checkoutBusy || Boolean(pendingCheckoutState?.cash_pay_payload);
+    });
+    const status = document.getElementById('posCheckoutStatus');
+    if (status) status.textContent = checkoutBusy ? dich('pos.processing')
+        : pendingCashOrderId ? dich('pos.cash.pending_order', {id:pendingCashOrderId})
+        : pendingCheckoutState?.operation_id ? dich('common.session.mutation_unknown') : '';
+
     const button = document.getElementById('btnCheckout');
     if (!button) return;
     const pendingNotice = document.getElementById('cashPendingNotice');
@@ -2116,7 +2138,7 @@ async function loadCurrentShift(hienLoi = true) {
     const requestId = ++shiftRequestId;
     capNhatThanhCa('loading');
     try {
-        const res = await apiCall(`/shifts/current/${currentShopId}`);
+        const res = await apiCall(`/shifts/current/${currentShopId}`, 'GET', null, posRequestUi());
         if (requestId !== shiftRequestId) return activeShift;
         activeShift = res?.shift || null;
         capNhatThanhCa(activeShift ? 'open' : 'closed');
@@ -2564,9 +2586,16 @@ async function hoanTatTienMatDangCho(state) {
         return false;
     }
 
-    const ketQuaThanhToan = await apiCall(`/orders/${idDon}/pay`, 'POST', {
-        tendered_amount: cashTenderedAmount
-    });
+    state.cash_pay_payload ||= { tendered_amount: cashTenderedAmount };
+    luuCheckoutDangDo(state);
+    let ketQuaThanhToan;
+    try {
+        ketQuaThanhToan = await apiCall(`/orders/${idDon}/pay`, 'POST', state.cash_pay_payload, posRequestUi('POST'));
+    } catch (error) {
+        if (laLoi4xx(error)) delete state.cash_pay_payload;
+        luuCheckoutDangDo(state);
+        throw error;
+    }
     // Pay đã trả success (kể cả idempotent "đã PAID"): từ đây mới được xóa
     // state durable của tab.
     xoaCheckoutDangDo();
@@ -2636,7 +2665,8 @@ async function guiYeuCauTaoDonDangDo(state) {
     const res = await apiCall(
         `/orders/${state.shop_id}`,
         'POST',
-        state.create_payload
+        state.create_payload,
+        posRequestUi('POST')
     );
     checkoutOperationId = null;
     currentOrderId = Number(res.order_id);
@@ -3072,6 +3102,11 @@ async function thuTaoDonDangDo(state) {
     try {
         await guiYeuCauTaoDonDangDo(state);
     } catch (e) {
+        if (e.mutationOutcomeUnknown) {
+            luuCheckoutDangDo(state);
+            showToast(e.message);
+            return;
+        }
         if (e.code === 'QR_BANK_ACCOUNT_NOT_CONFIGURED') {
             setTransferCapability(false, false);
             luuCheckoutDangDo(state);
@@ -3268,7 +3303,7 @@ async function thuTienMatDonDangCho() {
     try {
         await hoanTatTienMatDangCho(state);
     } catch (e) {
-        if (Number(e.status) === 404) {
+        if (!e.mutationOutcomeUnknown && Number(e.status) === 404) {
             // 404 xác định đơn không còn tồn tại; bỏ state nhưng giữ giỏ để có
             // thể tạo lại sau khi người dùng kiểm tra.
             xoaCheckoutDangDo();
@@ -3558,6 +3593,8 @@ async function hienHoaDon(orderId, ketQuaDiemMoiNhat = null, receiptCopy = false
     document.getElementById('hoaDonSection').style.display = 'block';
     capNhatGioHangResponsivePOS();
     if (posMobileCartMedia.matches) moGioHangMobile();
+    document.getElementById('hoaDonSection').scrollIntoView({block:'nearest'});
+    document.querySelector('#hoaDonActions button')?.focus();
     showFirstRunSaleSuccess(d);
 }
 

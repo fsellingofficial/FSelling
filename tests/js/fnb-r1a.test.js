@@ -601,6 +601,7 @@ function fakeCheckoutElement(id, paymentMethod) {
         disabled: false,
         open: false,
         dataset: {},
+        setAttribute(key, value) { this[key] = value; },
         classList: { add() {}, remove() {} },
         addEventListener(type, handler) {
             listeners.set(type, [...(listeners.get(type) || []), handler]);
@@ -698,9 +699,10 @@ async function mountedFnbHarness(options = {}) {
         document,
         addEventListener: globalThis.addEventListener,
         crypto: { randomUUID: () => `operation-${++uuidIndex}` },
+        matchMedia: () => ({matches:Boolean(options.mobile),addEventListener(){}}),
     });
-    setGlobal('apiCall', async (endpoint, method, body) => {
-        calls.push({ endpoint, method, body });
+    setGlobal('apiCall', async (endpoint, method, body, requestUi) => {
+        calls.push({ endpoint, method, body, requestUi });
         if (endpoint === '/shops') return [{ id: 1, name: 'Test', fnb_enabled: true }];
         if (endpoint.startsWith('/fnb/floor')) {
             const value = floor();
@@ -738,6 +740,7 @@ async function mountedFnbHarness(options = {}) {
             if (reply instanceof Error) throw reply;
             return reply;
         }
+        if (endpoint.endsWith('/manager-pin')) return options.pinReply;
         throw new Error(`Unexpected endpoint ${endpoint}`);
     });
     const source = require.resolve('../../static/js/fnb-r1a.js');
@@ -887,6 +890,11 @@ async function testCancellationApprovalDialogLifecycle() {
             open: false, pin: '', reason: '', resolution: 'WASTE', status: '',
         });
         const approved = calls.filter(call => call.endpoint.endsWith('/cancel-line')).at(-1).body;
+        assert.equal(calls.find(call => call.endpoint === '/fnb/manager-approvals').requestUi.timeoutMs, 30000);
+        elements.fnbManagerPin.value = '2468';
+        elements.fnbPinForm.emit('submit');
+        await settle();
+        assert.equal(calls.find(call => call.endpoint.endsWith('/manager-pin')).requestUi.timeoutMs, 30000);
         assert.equal(approved.reason, 'Món đã làm');
         assert.equal(approved.resolution, 'RESTOCK');
         assert.equal(approved.approval_token, 'approval-token');
@@ -1093,6 +1101,20 @@ async function testCheckoutCashBehavior() {
     }
 }
 
+async function testOrderViews() {
+    const h = await mountedFnbHarness({mobile:true, existingSession:true});
+    try {
+        const count=h.calls.length;
+        h.elements.fnbViewBill.emit('click');
+        assert.equal(h.elements.fnbMenuPane.hidden,true);
+        assert.equal(h.elements.fnbDraftPane.hidden,false);
+        h.elements.fnbViewSent.emit('click');
+        assert.equal(h.elements.fnbDraftPane.inert,true);
+        assert.equal(h.elements.fnbSentPane.hidden,false);
+        assert.equal(h.calls.length,count,'changing views must not mutate or refetch the bill');
+    } finally {h.cleanup();}
+}
+
 async function testCheckoutFailureRecovery() {
     const rejected = await mountedFnbHarness({
         openCheckout: true,
@@ -1109,7 +1131,7 @@ async function testCheckoutFailureRecovery() {
         rejected.cleanup();
     }
 
-    for (const error of [new Error('offline'), fnbError('SERVER_ERROR', 'server error', 500)]) {
+    for (const error of [new Error('offline'), fnbError('SERVER_ERROR', 'server error', 500), Object.assign(fnbError('AUTH', 'reauth', 401), {mutationOutcomeUnknown:true}), Object.assign(fnbError('BODY', 'lost body', 200), {mutationOutcomeUnknown:true})]) {
         const ambiguous = await mountedFnbHarness({ openCheckout: true, payReplies: [error] });
         try {
             ambiguous.elements.fnbCashTendered.value = '130000';
@@ -1180,7 +1202,46 @@ assert.equal(cashExactAllowed('', 0), true);
 assert.equal(cashExactAllowed('GIAM10', 0), false);
 assert.equal(cashExactAllowed('', 1), false);
 
+async function testPermissionFailureCannotReapply() {
+    let writes = 0;
+    const {controller, deps} = await loadedController({request: async (_endpoint, method) => {
+        if (!method || method === 'GET') return floor();
+        writes++;
+        throw fnbError('FORBIDDEN', 'No permission', 403);
+    }});
+    controller.seedSession(session());
+    await assert.rejects(controller.addLine({product_id:7, quantity:1}));
+    assert.equal(controller.getState().pendingMutation, null);
+    assert.equal(controller.getState().recoverableDraft, null);
+    await assert.rejects(controller.reapplyRecoverable());
+    assert.equal(writes, 1);
+    assert.ok(deps.renders.some(event => event.type === 'permission-error'));
+}
+
+async function testPinReplyCannotChangeAnotherShop() {
+    let finish;
+    const harness = await mountedFnbHarness({pinReply:new Promise(resolve => { finish = resolve; })});
+    try {
+        const {elements, calls, settle} = harness;
+        elements.fnbManagerPin.value = '2468';
+        elements.fnbPinForm.emit('submit');
+        await settle();
+        elements.fnbShopSelect.value = '2';
+        elements.fnbShopSelect.emit('change', {target:elements.fnbShopSelect});
+        await settle();
+        elements.fnbManagerPin.value = '1357';
+        const before = elements.fnbSetupStatus.textContent;
+        calls.find(call => call.endpoint.endsWith('/manager-pin')).requestUi.onSlow();
+        finish({});
+        await settle();
+        assert.equal(elements.fnbManagerPin.value, '1357');
+        assert.equal(elements.fnbSetupStatus.textContent, before);
+    } finally { harness.cleanup(); }
+}
+
 Promise.resolve()
+    .then(testPinReplyCannotChangeAnotherShop)
+    .then(testPermissionFailureCannotReapply)
     .then(testLateFloorResponseIsIgnoredAfterShopChange)
     .then(testPollingAndLifecycle)
     .then(testSessionAnnouncementsOnlyFollowMutations)
@@ -1203,4 +1264,5 @@ Promise.resolve()
     .then(testMountedReloadShowsPendingRetry)
     .then(testCheckoutCashBehavior)
     .then(testCheckoutFailureRecovery)
+    .then(testOrderViews)
     .then(() => process.stdout.write('fnb-r1a controller ok\n'));

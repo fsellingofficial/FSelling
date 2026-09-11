@@ -8,6 +8,9 @@
         };
 
     Object.assign(resources.vi.translation, {
+        'common.tools': 'Khác',
+        'common.request.timeout': 'Chưa nhận được phản hồi đúng hạn.',
+        'common.request.slow': 'Đang chờ máy chủ phản hồi…',
         'common.language': 'Ngôn ngữ',
         'common.language.vi': 'Tiếng Việt',
         'common.language.en': 'English',
@@ -70,6 +73,9 @@
     });
 
     Object.assign(resources.en.translation, {
+        'common.tools': 'More',
+        'common.request.timeout': 'No response received before the deadline.',
+        'common.request.slow': 'Waiting for the server…',
         'common.language': 'Language',
         'common.language.vi': 'Tiếng Việt',
         'common.language.en': 'English',

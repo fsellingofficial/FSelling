@@ -58,10 +58,10 @@ def test_fnb_page_and_assets_are_wired(client):
         "fnbServiceTickets",
     ):
         assert f'id="{element_id}"' in html
-    assert "/css/fnb-r1a.css?v=20260907-plan2-correction1" in html
+    assert "/css/fnb-r1a.css?v=20260911-r5-6" in html
     assert 'aria-describedby="fnbCashTenderedHelp fnbCashTenderedError"' in html
-    assert "/js/locales/fnb.js?v=20260907-plan2" in html
-    assert "/js/fnb-r1a.js?v=20260907-plan2-correction1" in html
+    assert "/js/locales/fnb.js?v=20260911-r5-5" in html
+    assert "/js/fnb-r1a.js?v=20260911-r5-5" in html
     assert html.count("roles-return=20260908-r3") == 2
     assert "roles-return=20260908-r3-c1" in html
     source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
@@ -89,7 +89,7 @@ def test_fnb_station_page_and_role_routing_are_wired(client):
     assert 'id="fnbStationTickets"' in page.text
     assert 'id="fnbStationConnection"' in page.text
     assert "/css/fnb-station-r1b.css?" in page.text
-    assert "/js/fnb-station-r1b.js?v=20260907-plan2" in page.text
+    assert "/js/fnb-station-r1b.js?v=20260911-r5-5" in page.text
     assert "/js/i18n.js?" in page.text
 
     source = (ROOT / "static/js/fnb-r1a.js").read_text(encoding="utf-8")
@@ -100,7 +100,8 @@ def test_fnb_station_page_and_role_routing_are_wired(client):
     assert "expected_session_revision" in station_source
     assert "controller.retryPending()" in station_source
     assert 'data-action="resume"' in station_source
-    assert "Sẵn sàng giao" in station_source
+    assert "data-action=\"done\"" in station_source
+    assert "Sẵn sàng giao" in (ROOT / "static/js/locales/fnb.js").read_text(encoding="utf-8")
 
 
 def test_service_role_keeps_service_controls_and_hides_financial_setup_controls():
@@ -125,7 +126,7 @@ def test_service_role_keeps_service_controls_and_hides_financial_setup_controls(
 
 
 def test_fnb_role_translations_use_one_fresh_common_catalog_url():
-    expected = "/js/locales/common.js?v=20260901-fnb-r1b"
+    expected = "/js/locales/common.js?v=20260911-r5-5"
     for name in ("index.html", "seller.html", "fnb.html", "pos.html"):
         assert expected in (ROOT / "static" / name).read_text(encoding="utf-8")
 

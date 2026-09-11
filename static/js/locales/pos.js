@@ -8,6 +8,7 @@
         };
 
     Object.assign(resources.vi.translation, {
+        'pos.cart.decrease': 'Giảm số lượng', 'pos.cart.increase': 'Tăng số lượng',
         'pos.page_title': 'POS Bán Hàng Chuyên Nghiệp | F-Selling',
         'pos.header.title': 'POS BÁN HÀNG',
         'pos.header.back_dashboard': 'Quay lại Dashboard',
@@ -246,7 +247,7 @@
         'pos.cash.change': 'Tiền thối',
         'pos.cash.remaining': 'Còn thiếu',
         'pos.cash.pending': 'Đơn đã tạo nhưng chưa ghi nhận thanh toán.',
-        'pos.cash.pending_order': 'Đơn #{{id}} đã tạo nhưng chưa ghi nhận thanh toán.',
+        'pos.cash.pending_order': 'Chưa xác nhận được kết quả thanh toán đơn #{{id}}. Kiểm tra hoặc thử lại đúng đơn; không thu thêm tiền chỉ vì chưa thấy hóa đơn.',
         'pos.cash.cancel_restore': 'Hủy đơn & hoàn kho',
 
         'pos.customer.optional': 'Khách hàng (tùy chọn)',
@@ -504,6 +505,7 @@
     });
 
     Object.assign(resources.en.translation, {
+        'pos.cart.decrease': 'Decrease quantity', 'pos.cart.increase': 'Increase quantity',
         'pos.page_title': 'Professional Point of Sale | F-Selling',
         'pos.header.title': 'POINT OF SALE',
         'pos.header.back_dashboard': 'Back to Dashboard',
@@ -738,7 +740,7 @@
         'pos.cash.change': 'Change',
         'pos.cash.remaining': 'Remaining',
         'pos.cash.pending': 'The order was created but payment has not been recorded.',
-        'pos.cash.pending_order': 'Order #{{id}} was created but payment has not been recorded.',
+        'pos.cash.pending_order': 'Payment outcome for order #{{id}} is not confirmed. Check or retry this order; do not collect more cash just because the receipt is missing.',
         'pos.cash.cancel_restore': 'Cancel order & restore stock',
 
         'pos.customer.optional': 'Customer (optional)',

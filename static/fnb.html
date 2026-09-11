@@ -10,9 +10,9 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="F-Selling">
     <title data-i18n="fnb.page_title">Bán tại bàn | F-Selling</title>
-    <link rel="stylesheet" href="/css/style.css?v=20260731-i18n4">
-    <link rel="stylesheet" href="/css/fnb-r1a.css?v=20260907-plan2-correction1">
-    <link rel="stylesheet" href="/css/session-device-r4.css?v=20260910-r4-1">
+    <link rel="stylesheet" href="/css/style.css?v=20260911-r5-5">
+    <link rel="stylesheet" href="/css/fnb-r1a.css?v=20260911-r5-6">
+    <link rel="stylesheet" href="/css/session-device-r4.css?v=20260911-r5-5">
 </head>
 <body class="fnb-page">
     <header class="fnb-header">
@@ -29,6 +29,7 @@
                 <option value="en" data-i18n="common.language.en">English</option>
             </select>
         </label>
+    <details class="ui-tools"><summary data-i18n="common.tools">Khác</summary><div data-ui-tools></div></details>
     </header>
 
     <main class="fnb-shell">
@@ -60,9 +61,17 @@
                     <p class="eyebrow" data-i18n="fnb.session.eyebrow">Phiên phục vụ</p>
                     <h2 id="fnbSessionTitle"></h2>
                 </div>
-            </header>
+            <details class="ui-tools"><summary data-i18n="common.tools">Khác</summary><div data-ui-tools></div></details>
+    </header>
+            <p id="fnbOrderConnection" role="status"></p>
+            <p id="fnbOrderMutationStatus" role="status"></p>
+            <nav class="fnb-order-views" aria-label="Nội dung bàn">
+                <button id="fnbViewMenu" type="button" aria-pressed="true" data-i18n="fnb.view.menu">Món</button>
+                <button id="fnbViewBill" type="button" aria-pressed="false" data-i18n="fnb.view.bill">Bill</button>
+                <button id="fnbViewSent" type="button" aria-pressed="false" data-i18n="fnb.view.sent">Đã gửi</button>
+            </nav>
             <div class="fnb-order-layout">
-                <section class="fnb-menu-pane" aria-labelledby="fnbMenuTitle">
+                <section id="fnbMenuPane" class="fnb-menu-pane" aria-labelledby="fnbMenuTitle">
                     <div class="fnb-pane-heading">
                         <div><p class="eyebrow" data-i18n="fnb.menu.eyebrow">Thực đơn</p><h3 id="fnbMenuTitle" data-i18n="fnb.menu.title">Chọn món khách gọi</h3></div>
                         <label class="fnb-search-field" for="fnbProductSearch"><span class="sr-only" data-i18n="fnb.menu.search_label">Tìm món</span><input id="fnbProductSearch" type="search" autocomplete="off" data-i18n-placeholder="fnb.menu.search_placeholder" placeholder="Nhập tên món"></label>
@@ -70,11 +79,14 @@
                     <nav id="fnbCategoryTabs" class="fnb-category-tabs" aria-label="Danh mục món" data-i18n-aria-label="fnb.menu.categories"></nav>
                     <div id="fnbProductGrid" class="fnb-product-grid"></div>
                 </section>
-                <section class="fnb-bill-pane" aria-labelledby="fnbDraftTitle">
+                <section id="fnbBillPane" class="fnb-bill-pane" aria-labelledby="fnbDraftTitle">
                     <div class="fnb-bill-scroll">
+<div id="fnbDraftPane">
                         <div class="fnb-bill-heading"><p class="eyebrow" data-i18n="fnb.bill.eyebrow">Bill hiện tại</p><h3 id="fnbDraftTitle" data-i18n="fnb.draft.title">Món chưa gửi</h3></div>
                         <div id="fnbDraftLines" class="fnb-draft-lines"></div>
-                        <details class="fnb-sent-section">
+</div>
+<div id="fnbSentPane">
+                        <details class="fnb-sent-section" open>
                             <summary id="fnbSentTitle" data-i18n="fnb.sent.title">Đã gửi chế biến</summary>
                             <div id="fnbSentLines" class="fnb-draft-lines"></div>
                         </details>
@@ -82,6 +94,7 @@
                             <h3 id="fnbServiceTitle" data-i18n="fnb.service.title">Tiến độ chế biến và giao món</h3>
                             <div id="fnbServiceTickets"></div>
                         </section>
+</div>
                         <div id="fnbConflict" class="fnb-conflict" hidden></div>
                         <details id="fnbTableActions" class="fnb-table-actions" hidden>
                             <summary data-i18n="fnb.table_actions.title">Chuyển hoặc gộp bàn</summary>
@@ -251,12 +264,12 @@
 
     <div id="toast" role="status" aria-live="polite"></div>
     <script src="/js/vendor/i18next-26.3.6.min.js?v=20260731-i18n4"></script>
-    <script src="/js/locales/common.js?v=20260901-fnb-r1b&amp;session=20260910-r4"></script>
-    <script src="/js/locales/fnb.js?v=20260907-plan2&amp;roles-return=20260908-r3"></script>
+    <script src="/js/locales/common.js?v=20260911-r5-5&amp;session=20260910-r4"></script>
+    <script src="/js/locales/fnb.js?v=20260911-r5-5&amp;roles-return=20260908-r3"></script>
     <script src="/js/i18n.js?v=20260731-i18n4"></script>
-    <script src="/js/api.js?v=20260901-fnb-r1a&amp;g=20260813-i09-g2h2&amp;session=20260910-r4"></script>
-    <script src="/js/session-device-r4.js?v=20260910-r4-1"></script>
-    <script src="/js/fnb-r1a.js?v=20260907-plan2-correction1&amp;roles-return=20260908-r3-c1"></script>
-    <script src="/js/pwa.js?v=20260806-pwa"></script>
+    <script src="/js/api.js?v=20260911-r5-5&amp;g=20260813-i09-g2h2&amp;session=20260910-r4"></script>
+    <script src="/js/session-device-r4.js?v=20260911-r5-5"></script>
+    <script src="/js/fnb-r1a.js?v=20260911-r5-5&amp;roles-return=20260908-r3-c1"></script>
+    <script src="/js/pwa.js?v=20260911-r5-5"></script>
 </body>
 </html>

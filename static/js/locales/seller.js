@@ -8,6 +8,10 @@
         };
 
     Object.assign(resources.vi.translation, {
+        'seller.dashboard.all_time': 'Mọi thời gian',
+        'seller.dashboard.updated': 'Cập nhật',
+        'seller.dashboard.last_success': 'Dữ liệu cũ lúc',
+
         'seller.page_title': 'Bảng điều khiển Người bán | F-Selling',
         'seller.nav.open_pos': 'Mở POS bán hàng',
         'seller.nav.back_admin': 'Về Admin',
@@ -1256,6 +1260,10 @@
     });
 
     Object.assign(resources.en.translation, {
+        'seller.dashboard.all_time': 'All time',
+        'seller.dashboard.updated': 'Updated',
+        'seller.dashboard.last_success': 'Previous data from',
+
         'seller.page_title': 'Seller Dashboard | F-Selling',
         'seller.nav.open_pos': 'Open POS',
         'seller.nav.back_admin': 'Back to Admin',

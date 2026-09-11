@@ -46,7 +46,7 @@ def test_v1_sync_is_wired_without_replacing_v0_sync():
     assert "OfflineBan.batTuDongBo(" in js
     html = _read("static/pos.html")
     assert "/js/offline-ban.js?v=20260813-i09-f3&g=20260813-i09-g2h6" in html
-    assert "/js/pos.js?v=20260824-r14-production2" in html
+    assert "/js/pos.js?v=20260911-r5-7" in html
 
 
 def test_node_confirmation_stays_above_recovery_and_keeps_focus():

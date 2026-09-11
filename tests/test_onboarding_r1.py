@@ -194,6 +194,6 @@ def test_onboarding_board_and_its_hidden_frontend_fetch_are_removed():
     assert "loadOnboarding" not in js
     assert "openOnboardingStep" not in js
     assert "seller.onboarding." not in locale
-    version = "20260825-assistant-guided-tasks-r1-1"
+    version = "20260911-r5-5"
     assert f"/js/locales/seller.js?v={version}" in html
     assert f"/js/seller.js?v={version}" in html

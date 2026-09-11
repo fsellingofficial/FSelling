@@ -190,4 +190,4 @@ def test_daily_close_ui_is_part_of_action_center_and_only_navigates():
         "seller.daily_close.kind.EXPENSE_REMINDERS.description",
     ):
         assert locale.count(f"'{key}'") == 2, key
-    assert "20260825-assistant-guided-tasks-r1-1" in html
+    assert "20260911-r5-5" in html

@@ -210,5 +210,5 @@ def test_feedback_ui_is_localized_and_cache_busted():
     )
     for key in keys:
         assert locale.count(f"'seller.assistant.{key}'") == 2
-    assert "/js/locales/seller.js?v=20260825-assistant-guided-tasks-r1-1" in html
-    assert "/js/seller.js?v=20260825-assistant-guided-tasks-r1-1" in html
+    assert "/js/locales/seller.js?v=20260911-r5-5" in html
+    assert "/js/seller.js?v=20260911-r5-5" in html

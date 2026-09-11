@@ -29,11 +29,11 @@
         #nhatKyShopSelector,
         .doi-soat-shop-field { display: none !important; }
     </style>
-    <link rel="stylesheet" href="/css/seller.css?v=20260825-assistant-guided-tasks-r1-1&amp;onboarding=20260828-r2&amp;roles-return=20260908-r3">
+    <link rel="stylesheet" href="/css/seller.css?v=20260911-r5-5&amp;onboarding=20260828-r2&amp;roles-return=20260908-r3">
     <link rel="stylesheet" href="/css/onboarding-r2.css?v=20260828-r2-1">
     <link rel="stylesheet" href="/css/subscriptions.css?v=20260807-goi-cuoc-f3">
-    <link rel="stylesheet" href="/css/style.css?v=20260731-i18n4">
-    <link rel="stylesheet" href="/css/session-device-r4.css?v=20260910-r4-1">
+    <link rel="stylesheet" href="/css/style.css?v=20260911-r5-5">
+    <link rel="stylesheet" href="/css/session-device-r4.css?v=20260911-r5-5">
     <style>
         .doi-soat-badge {
             display: none;
@@ -540,7 +540,7 @@
                     <small data-i18n="seller.nav.management_area">Quản trị cửa hàng</small>
                     <strong id="sellerPageTitle" data-i18n="seller.tabs.dashboard">Thống kê</strong>
                 </div>
-                <div class="seller-nav-spacer"></div>
+                <div class="seller-nav-spacer"></div><details class="ui-tools"><summary data-i18n="common.tools">Khác</summary><div data-ui-tools></div></details>
                 <!-- MỘT ô chọn cửa hàng cho cả trang. Trước đây mỗi tab có ô riêng
                      và giữ trạng thái riêng, khiến người dùng tưởng phần mềm hỏng. -->
                 <label id="oChonCuaHangChung" style="display: none; align-items: center; gap: 0.4rem;">
@@ -552,6 +552,11 @@
             <main class="container seller-main">
         <!-- TAB 1: THỐNG KÊ (DASHBOARD) -->
         <div id="dashboard" class="tab-content active glass-card">
+            <nav id="sellerQuickActions" class="seller-quick-actions" aria-label="Thao tác nhanh" hidden>
+                <button type="button" onclick="document.getElementById('tabActionCenter')?.click()" data-i18n="seller.tabs.action_center">Việc cần xử lý</button>
+                <button type="button" onclick="document.getElementById('tabDoiSoat')?.click()" data-i18n="seller.tabs.reconciliation">Đối soát</button>
+                <button type="button" onclick="SessionDeviceR4.openSelf()" data-i18n="common.sessions.open">Phiên đăng nhập</button>
+            </nav>
             <aside id="firstRunResumeCard" class="first-run-resume" hidden aria-labelledby="firstRunResumeTitle">
                 <h3 id="firstRunResumeTitle" data-i18n="seller.first_run.resume_title">Tiếp tục thiết lập</h3>
                 <p id="firstRunResumeText" aria-live="polite"></p>
@@ -565,7 +570,9 @@
             <div id="dashboardContent" style="display: none;">
                 <h3><span data-i18n="seller.dashboard.overview">Tổng quan</span> <span id="currentShopName" class="text-gradient"></span></h3>
             
-                <div class="stats-grid">
+                <p id="dashboardStatsStatus" role="status"></p>
+                <button id="dashboardStatsRetry" type="button" onclick="loadDashboardShop(dashboardShopId, 'stats')" data-i18n="common.refresh" hidden>Tải lại</button>
+                <div id="dashboardStatsValues" class="stats-grid" hidden>
                     <div class="stat-card">
                         <h4 data-i18n="seller.dashboard.total_revenue">TỔNG DOANH THU</h4>
                         <strong id="statRev" class="stat-value revenue">0 ₫</strong>
@@ -599,7 +606,7 @@
                     </div>
                 </div> -->
 
-                <div class="chart-grid">
+                <div id="dashboardStatsCharts" class="chart-grid" hidden>
                     <div class="chart-card">
                         <h4 data-i18n="seller.dashboard.revenue_trend">Xu hướng doanh thu (7 ngày)</h4>
                         <div class="chart-container">
@@ -633,7 +640,9 @@
                     <button class="btn-outline" onclick="xoaLocNgay()" data-i18n="seller.dashboard.clear_filter">Bỏ lọc</button>
                 </div>
 
-                <div class="table-responsive">
+                <p id="dashboardOrdersStatus" role="status"></p>
+                <button id="dashboardOrdersRetry" type="button" onclick="loadDashboardShop(dashboardShopId, 'orders')" data-i18n="common.refresh" hidden>Tải lại</button>
+                <div class="table-responsive" tabindex="0" role="region" aria-label="Đơn hàng gần đây">
                     <table class="db-table">
                         <thead>
                             <tr><th data-i18n="seller.table.order_id">Mã ĐH</th><th data-i18n="seller.table.date">Ngày</th><th data-i18n="seller.table.cashier">Thu ngân</th><th data-i18n="seller.table.total">Tổng tiền</th><th data-i18n="seller.table.status">Trạng thái</th><th></th></tr>
@@ -2656,23 +2665,34 @@
     </div>
 
     <script src="/js/vendor/i18next-26.3.6.min.js?v=20260731-i18n4"></script>
-    <script src="/js/locales/common.js?v=20260901-fnb-r1b&amp;session=20260910-r4"></script>
-    <script src="/js/locales/seller.js?v=20260825-assistant-guided-tasks-r1-1&amp;onboarding=20260828-r2-1&amp;uat=20260829-p1&amp;fnb=20260901-r1a&amp;roles-return=20260908-r3&amp;session=20260910-r4"></script>
+    <script src="/js/locales/common.js?v=20260911-r5-5&amp;session=20260910-r4"></script>
+    <script src="/js/locales/seller.js?v=20260911-r5-5&amp;onboarding=20260828-r2-1&amp;uat=20260829-p1&amp;fnb=20260901-r1a&amp;roles-return=20260908-r3&amp;session=20260910-r4"></script>
     <script src="/js/locales/subscriptions.js?v=20260807-goi-cuoc-f3"></script>
     <script src="/js/i18n.js?v=20260731-i18n4"></script>
-<script src="/js/api.js?v=20260812-i09-f1-c1&g=20260813-i09-g2h2&fnb=20260901-r1a&session=20260910-r4"></script>
-    <script src="/js/session-device-r4.js?v=20260910-r4-1"></script>
+<script src="/js/api.js?v=20260911-r5-5&g=20260813-i09-g2h2&fnb=20260901-r1a&session=20260910-r4"></script>
+    <script src="/js/session-device-r4.js?v=20260911-r5-5"></script>
     <!-- barcode.js phải nạp trước seller.js: seller.js gọi BarcodeScanner.batDau() ngay khi chạy. -->
     <script src="/js/barcode.js?v=20260731-i18n4"></script>
     <script src="/js/barcode-camera.js?v=20260731-i18n4"></script>
     <script src="/js/doc-tien.js?v=20260731-i18n4"></script>
     <script src="/js/onboarding-r2.js?v=20260828-r2-1&amp;uat=20260829-p1"></script>
-    <script src="/js/seller.js?v=20260825-assistant-guided-tasks-r1-1&amp;onboarding=20260828-r2-1&amp;fnb=20260901-r1b&amp;roles-return=20260908-r3&amp;session=20260910-r4"></script>
+    <script src="/js/seller.js?v=20260911-r5-5&amp;onboarding=20260828-r2-1&amp;fnb=20260901-r1b&amp;roles-return=20260908-r3&amp;session=20260910-r4"></script>
     <script src="/js/purchasing.js?v=20260822-order-actions-a11y-r2"></script>
     <!-- Nạp SAU seller.js: expenses.js dùng apiCall/showToast/showCustomConfirm
          và các helper định dạng tiền của trang. -->
     <script src="/js/expenses.js?v=20260808-dong-tien-k1"></script>
     <script src="/js/subscriptions.js?v=20260807-goi-cuoc-f3"></script>
-    <script src="/js/pwa.js?v=20260806-pwa"></script>
+    <script src="/js/pwa.js?v=20260911-r5-5"></script>
+<script>
+        (() => {
+            const media = window.matchMedia('(max-width: 899px)');
+            const refresh = () => {
+                setSellerNavigation(false);
+                document.getElementById('sellerQuickActions').hidden = !media.matches || localStorage.getItem('role') !== 'SELLER';
+            };
+            media.addEventListener('change', refresh);
+            refresh();
+        })();
+    </script>
 </body>
 </html>

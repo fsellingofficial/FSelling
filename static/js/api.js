@@ -203,7 +203,7 @@ function getToken() {
     return cachedToken;
 }
 
-async function apiCall(endpoint, method = 'GET', body = null) {
+async function apiCall(endpoint, method = 'GET', body = null, requestUi = {}) {
     const isFormData = body instanceof FormData;
     const headers = {
         'Accept-Language': currentLanguage()
@@ -222,27 +222,53 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         options.body = isFormData ? body : JSON.stringify(body);
     }
 
-    let res;
+    let res, rawBody, responseError;
+    let deadlineTimer, slowTimer;
+    const controller = requestUi.timeoutMs > 0 ? new AbortController() : null;
+    if (controller) options.signal = controller.signal;
+    const readResponse = async () => {
+        try {
+            res = await fetch(`${BASE_URL}${endpoint}`, options);
+            if (!res.headers.get('Content-Disposition')) rawBody = await res.text();
+        } catch (cause) {
+            const error = new Error(t('common.network_error'));
+            if (res) error.status = res.status;
+            markMutationOutcomeUnknown(error, method, body);
+            throw error;
+        }
+    };
     try {
-        res = await fetch(`${BASE_URL}${endpoint}`, options);
+        if (requestUi.onSlow && requestUi.slowAfterMs > 0) {
+            slowTimer = setTimeout(() => { try { requestUi.onSlow(); } catch (_) { /* UI cannot change a request outcome. */ } }, requestUi.slowAfterMs);
+        }
+        const reading = readResponse();
+        if (controller) {
+            await Promise.race([reading, new Promise((_, reject) => {
+                deadlineTimer = setTimeout(() => {
+                    const error = new Error(t('common.request.timeout'));
+                    error.code = 'CLIENT_TIMEOUT';
+                    markMutationOutcomeUnknown(error, method, body);
+                    reject(error);
+                    controller.abort();
+                }, requestUi.timeoutMs);
+            })]);
+        } else await reading;
     } catch (error) {
-        const networkError = new Error(t('common.network_error'));
-        markMutationOutcomeUnknown(networkError, method, body);
-        throw networkError;
+        responseError = error;
+    } finally {
+        clearTimeout(deadlineTimer);
+        clearTimeout(slowTimer);
     }
-    
-    if (res.headers.get('Content-Disposition')) {
-        return res; // Return raw response for file downloads
-    }
-    
+    if (responseError && (res?.status !== 401 || endpoint.includes('/auth/login'))) throw responseError;
+    if (res.headers.get('Content-Disposition')) return res;
     let data = null;
+    let parseError;
     try {
-        const rawBody = await res.text();
         data = rawBody ? JSON.parse(rawBody) : null;
-    } catch (error) {
-        const parseError = new Error(t('common.api_error'));
+    } catch (_) {
+        parseError = new Error(t('common.api_error'));
         parseError.status = res.status;
-        throw parseError;
+        markMutationOutcomeUnknown(parseError, method, body);
     }
     if (res.status === 401 && !endpoint.includes('/auth/login')) {
         let message = typeof data?.detail?.message === 'string'
@@ -258,6 +284,7 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         redirectToLogin();
         throw error;
     }
+    if (parseError) throw parseError;
     if (!res.ok) {
         let msg = data?.detail || t('common.api_error');
         if (Array.isArray(msg) && msg.length > 0 && msg[0].msg) {
@@ -273,6 +300,7 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         // Stable API codes are intentionally separate from localized text.  The
         // offline queue needs them to choose a durable, safe local state.
         error.code = typeof data?.detail?.code === 'string' ? data.detail.code : null;
+        if (res.status >= 500) markMutationOutcomeUnknown(error, method, body);
         throw error;
     }
     return data;
@@ -284,7 +312,7 @@ function markMutationOutcomeUnknown(error, method, body) {
     error.operationId = body?.operation_id || null;
     // Chỉ giữ draft có operation ID để retry. Body đăng nhập/PIN/mật khẩu
     // không được gắn vào Error rồi vô tình lọt vào logger của caller.
-    error.draft = error.operationId ? body : null;
+    error.draft = error.operationId && !Object.keys(body).some(key => /password|pin|token|secret/i.test(key)) ? body : null;
     error.message = `${error.message} ${t('common.session.mutation_unknown')}`;
     return error;
 }

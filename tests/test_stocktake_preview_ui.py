@@ -143,4 +143,4 @@ def test_ap_dung_xong_phai_nap_lai_token_truoc_phieu_ke_tiep():
 def test_html_bump_cache_buster_khi_seller_js_doi():
     """Quên bump `?v=` là người dùng chạy code cũ trong im lặng."""
     html = (ROOT / "static/seller.html").read_text(encoding="utf-8")
-    assert "/js/seller.js?v=20260825-assistant-guided-tasks-r1-1" in html
+    assert "/js/seller.js?v=20260911-r5-5" in html

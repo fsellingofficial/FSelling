@@ -257,6 +257,12 @@ function setSellerNavigation(open) {
     document.body.classList.toggle('seller-nav-open', Boolean(open));
     const toggle = document.getElementById('sellerNavToggle');
     if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const sidebar = document.getElementById('sellerSidebar');
+    if (sidebar) {
+        sidebar.inert = window.matchMedia('(max-width: 899px)').matches && !open;
+        if (open) sidebar.querySelector('button, a')?.focus();
+        else if (sidebar.contains(document.activeElement)) toggle?.focus();
+    }
 }
 
 function capNhatNhomDieuHuong() {
@@ -922,46 +928,64 @@ function khoaDashboardStats(shopId, query) {
     return `${shopId}|${query}`;
 }
 
-async function loadDashboardShop(id) {
+async function loadDashboardShop(id, only = null) {
     const shopId = Number(id);
     if (!Number.isInteger(shopId) || !allShops.some(shop => shop.id === shopId)) return;
     dashboardShopId = shopId;
+    const requestId = only ? dashboardRequestId : ++dashboardRequestId;
+    shiftHistoryRequestId += 1;
     const ordersQuery = chuoiThamSoDon();
     const statsQuery = chuoiThamSoNgay();
     const ordersKey = khoaDashboardOrders(shopId, ordersQuery);
     const statsKey = khoaDashboardStats(shopId, statsQuery);
-    const requestId = ++dashboardRequestId;
-    // Hủy ngay cả request lịch sử ca cũ trước khi request dashboard mới hoàn tất.
-    shiftHistoryRequestId += 1;
-    try {
-        const res = await apiCall(`/dashboard/seller/${shopId}${ordersQuery}`);
-        if (
-            requestId !== dashboardRequestId
-            || shopId !== dashboardShopId
-            || ordersKey !== khoaDashboardOrders(shopId, chuoiThamSoDon())
-        ) return;
-        if (!doiSoatShopId) doiSoatShopId = shopId;
-        if (doiSoatShopId === shopId) {
-            doiSoatBadgeRequestId += 1;
-            capNhatBadgeDoiSoat(res.reconciliation_count || 0);
-        }
-        dashboardOrdersCache = { shopId, key: ordersKey, data: res };
-        renderDashboardOrders(shopId, res);
-        loadShiftHistory(shopId);
-
-        const stats = await apiCall(`/shops/${shopId}/stats${statsQuery}`);
-        if (
-            requestId !== dashboardRequestId
-            || shopId !== dashboardShopId
-            || statsKey !== khoaDashboardStats(shopId, chuoiThamSoNgay())
-        ) return;
-        dashboardStatsCache = { shopId, key: statsKey, data: stats };
-        renderDashboardStats(stats);
-    } catch(e) {
-        if (requestId === dashboardRequestId && shopId === dashboardShopId) {
-            showToast(e.message);
+    document.getElementById('dashboardContent').style.display = 'block';
+    document.getElementById('currentShopName').textContent = allShops.find(shop => shop.id === shopId)?.name || '';
+    const valid = region => requestId === dashboardRequestId && shopId === dashboardShopId
+        && (region === 'orders' ? ordersKey === khoaDashboardOrders(shopId, chuoiThamSoDon()) : statsKey === khoaDashboardStats(shopId, chuoiThamSoNgay()));
+    const periods = [document.getElementById('filterTuNgay')?.value, document.getElementById('filterDenNgay')?.value].filter(Boolean).join(' – ') || t('seller.dashboard.all_time');
+    async function read(region) {
+        const stats = region === 'stats';
+        const prefix = stats ? 'dashboardStats' : 'dashboardOrders';
+        const status = document.getElementById(prefix + 'Status');
+        const retry = document.getElementById(prefix + 'Retry');
+        const values = document.getElementById(stats ? 'dashboardStatsValues' : 'orderList');
+        const chart = stats ? document.getElementById('dashboardStatsCharts') : null;
+        const cache = stats ? dashboardStatsCache : dashboardOrdersCache;
+        const same = cache?.key === (stats ? statsKey : ordersKey);
+        values.hidden = !same;
+        if (chart) chart.hidden = !same;
+        status.textContent = t('common.loading') + ' · ' + periods;
+        retry.hidden = true;
+        retry.disabled = true;
+        try {
+            const data = await apiCall(stats ? `/shops/${shopId}/stats${statsQuery}` : `/dashboard/seller/${shopId}${ordersQuery}`, 'GET', null, {
+                timeoutMs:15000,slowAfterMs:10000,onSlow:()=>{if(valid(region)) status.textContent=t('common.request.slow') + ' · ' + periods;}
+            });
+            if (!valid(region)) return;
+            const at = new Date().toLocaleTimeString();
+            if (stats) {
+                dashboardStatsCache = {shopId,key:statsKey,data,at};
+                renderDashboardStats(data);
+            } else {
+                if (!doiSoatShopId) doiSoatShopId = shopId;
+                if (doiSoatShopId === shopId) { doiSoatBadgeRequestId += 1; capNhatBadgeDoiSoat(data.reconciliation_count || 0); }
+                dashboardOrdersCache = {shopId,key:ordersKey,data,at};
+                renderDashboardOrders(shopId,data);
+                loadShiftHistory(shopId);
+            }
+            values.hidden = false;
+            if (chart) chart.hidden = false;
+            status.textContent = periods + ' · ' + t('seller.dashboard.updated') + ' ' + at;
+        } catch(error) {
+            if (!valid(region)) return;
+            status.textContent = error.message + ' · ' + periods
+                + (same ? ' · ' + t('seller.dashboard.last_success') + ' ' + (cache.at || '—') : '');
+            retry.hidden = false;
+        } finally {
+            if (valid(region)) retry.disabled = false;
         }
     }
+    await Promise.all((only === 'stats' ? ['stats'] : only === 'orders' ? ['orders'] : ['orders','stats']).map(read));
 }
 
 function renderShiftHistory(data) {

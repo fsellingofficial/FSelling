@@ -246,10 +246,12 @@
 
     function installLauncher() {
         if (!localStorage.getItem('token') || !protectedPaths.some(path => global.location?.pathname?.startsWith(path))) return;
-        const button = element('button', 'session-device-launcher', tr('common.sessions.open'));
-        button.type = 'button';
-        button.addEventListener('click', () => open('self'));
-        document.body?.append(button);
+        document.querySelectorAll('[data-ui-tools]').forEach(slot => {
+            const button = element('button', 'session-device-launcher', tr('common.sessions.open'));
+            button.type = 'button';
+            button.addEventListener('click', () => open('self'));
+            slot.append(button);
+        });
     }
 
     global.getOrCreateAuthDeviceId = getOrCreateAuthDeviceId;

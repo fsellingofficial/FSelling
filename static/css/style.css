@@ -502,3 +502,10 @@ th {
         font-size: 1.25rem;
     }
 }
+
+/* In-flow utilities keep recovery/install controls away from transaction CTAs. */
+.ui-tools { position: relative; flex: 0 0 auto; color: #1e293b; }
+.ui-tools > summary { min-height: 44px; padding: .6rem .75rem; cursor: pointer; border: 1px solid #64748b; border-radius: .5rem; background: #fff; box-sizing: border-box; }
+.ui-tools [data-ui-tools] { position: absolute; inset-inline-end: 0; top: 100%; z-index: 1400; width: min(19rem, 85vw); padding: .5rem; display: grid; gap: .5rem; background: #fff; color: #1e293b; border: 1px solid #64748b; border-radius: .5rem; box-shadow: 0 4px 16px #0002; }
+.ui-tools [data-ui-tools] button { width: 100%; min-height: 44px; white-space: normal; background: #fff; color: #1e293b; border: 1px solid #64748b; }
+.ui-tools :focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }

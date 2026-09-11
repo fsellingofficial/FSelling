@@ -83,4 +83,4 @@ def test_asset_goi_cuoc_duoc_bump_o_ca_hai_trang():
 
     # seller.js sang mốc R1 Forecast prefill; ba asset gói cước ở trên KHÔNG đổi nên
     # vẫn giữ nguyên mốc cũ - bump bừa cả cụm là bắt người dùng tải lại vô ích.
-    assert "/js/seller.js?v=20260825-assistant-guided-tasks-r1-1" in seller_html
+    assert "/js/seller.js?v=20260911-r5-5" in seller_html

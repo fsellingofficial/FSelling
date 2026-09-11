@@ -235,4 +235,4 @@ def test_action_center_ui_has_fixed_navigation_and_safe_states():
         "seller.action_center.kind.CUSTOMER_DEBT.description",
     ):
         assert locale.count(f"'{key}'") == 2, key
-    assert "20260825-assistant-guided-tasks-r1-1" in html
+    assert "20260911-r5-5" in html

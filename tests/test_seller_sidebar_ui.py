@@ -55,9 +55,9 @@ def test_nhan_sidebar_song_ngu_va_asset_duoc_bump_cache():
     ):
         assert locale.count(f"'{key}'") == 2
 
-    assert f"/css/seller.css?v={css_version}" in html
-    assert f"/js/locales/seller.js?v={version}" in html
-    assert f"/js/seller.js?v={version}" in html
+    assert f"/css/seller.css?v=20260911-r5-5" in html
+    assert f"/js/locales/seller.js?v=20260911-r5-5" in html
+    assert f"/js/seller.js?v=20260911-r5-5" in html
 
 
 def test_service_role_and_shared_return_pin_are_wired_without_seller_admin_access():
@@ -73,7 +73,7 @@ def test_service_role_and_shared_return_pin_are_wired_without_seller_admin_acces
     assert 'id="returnApprovalSettings"' in html
     assert 'id="returnManagerPin"' in html
     assert "`/shops/${shopId}/manager-pin`" in js
-    assert "`/fnb/shops/${Number(elements.fnbShopSelect.value)}/manager-pin`" in fnb_js
+    assert "`/fnb/shops/${shopId}/manager-pin`" in fnb_js
     for key in (
         "seller.staff.role_service_help",
         "seller.staff.role_cashier_help",

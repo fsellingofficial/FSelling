@@ -52,6 +52,15 @@ async function main() {
     storage.set('token', 'token-a');
     storage.set('username', 'alice');
     storage.set('role', 'SELLER');
+    // Launchers belong to the active page's utility slots, never over payment CTAs.
+    const slots = [[], []];
+    global.location.pathname = '/fnb';
+    global.document.createElement = () => ({ addEventListener() {} });
+    global.document.querySelectorAll = () => slots.map(items => ({ append: node => items.push(node) }));
+    global.document.body = { append() { throw new Error('floating launcher'); } };
+    listeners.get('DOMContentLoaded')();
+    assert.equal(slots[0].length, 1);
+    assert.equal(slots[1].length, 1);
     const requestState = [];
     global.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
     global.FormData = class FormData {};
