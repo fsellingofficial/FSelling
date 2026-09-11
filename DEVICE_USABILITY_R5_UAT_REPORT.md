@@ -1,5 +1,38 @@
 # Device Usability & PWA R5 — báo cáo kiểm chứng
 
+## Owner gate bản vá offline — 2026-09-12
+
+Owner duyệt ngoại lệ commit trực tiếp sau full-suite PASS để tránh chạy lại gate; vẫn kiểm tra diff và chặn tên file/giá trị secret trước commit. Không sửa script commit hoặc bỏ test khỏi bộ kiểm tra.
+
+Owner đã gửi output `test-commit.ps1 -TestOnly -WithConcurrency` tại worktree7a90: TEST PASS, 2.893,6 giây (48 phút13,6 giây), bỏ qua commit đúng theo TestOnly. Nhánh kiểm tra lại: `codex/device-usability-pwa-plan5`, HEAD5750da9; bản vá offline r5-8 và harness tích hợp v1 vẫn chưa commit. Sau output PASS chỉ cập nhật báo cáo này, không thay runtime/test.
+
+Kết quả này thay thế các ghi chú lịch sử bên dưới còn nói full-suite bản vá chưa chạy. Các TEST_GAP browser v1, reconnect giữa transaction IndexedDB và thiết bị/PWA thật vẫn OPEN. Chưa push/merge/deploy.
+
+## Bổ sung automated POS → offline v1
+
+Harness `tests/js/offline-ban-v1.test.js` đã nối production checkout và luuBanOffline với production OfflineBan.luuPhieuTuPOS/createReceiptV1, dùng FakeIndexedDB có sẵn, lease/catalog fixture hợp lệ. Node harness PASS: fresh cash checkout tạo đúng một receipt_v1, không ghi phieu v0, không dispatch online, dọn giỏ và mở khóa; restored previously-sent operation đi nhánh retry, không tăng receipt count. Không đổi runtime trong bước này.
+
+Đây là automated integration với IndexedDB giả, không đóng TEST_GAP browser v1/PWA vật lý hoặc reconnect giữa transaction. Lượt pytest ban đầu bị sandbox từ chối tạo uploads dưới Temp. Sau cấp quyền, 17 ca trong test_offline_client_v1.py và test_pos_retry_ui.py PASS (exit0), gồm harness tích hợp mới; không cộng vào112ca trước vì có trùng phạm vi. Full-suite cho bản vá vẫn chưa chạy.
+
+## Browser verification bản vá offline r5-8
+
+Dùng Codex in-app browser tại localhost:8515, DB copy riêng `../r5-offline-uat.db`; bộ mô phỏng nằm ngoài repo (`r5-offline-uat-server.py`, `r5-uat-controls.html`). Đây là browser với mạng/fault mô phỏng, không phải ngắt mạng OS/PWA vật lý. Đã quan sát AX và screenshot hóa đơn #99.
+
+1. Fresh offline: chọn 1 Lavie 5.000đ, khách đưa 10.000đ; UI báo lưu thành công, giỏ trống, đúng 1 phiếu cũ chờ gửi (v0). Online lại tự đồng bộ đúng đơn #98, 1 SALE_CASH 5.000đ, kho14→13. Không nhận kết quả này là bằng chứng fresh receipt v1.
+2. Create commit rồi mất phản hồi: wrapper ghi upstream200 và thay response503. DB đã có #99 PENDING với operation `504840db-e571-46a8-ad2e-0f7701c3161b`. Reload giữ đơn đang chờ; ô tender lúc creating về trống nên nhập lại10.000đ trước retry (chưa phải pay-unknown). Retry khi offline giữ trạng thái và 0 phiếu chờ; online retry mở hóa đơn đúng #99, 1 CASH_TOPUP 5.000đ, kho giữ12.
+3. Mạng trở lại ngay tại entry của helper lưu: v1 guard từ chối vì navigator.onLine=true; UI giữ giỏ Lavie/tender10.000 và nút hoạt động. Bấm lại online hoàn tất #100, 1 CASH_TOPUP 5.000đ, kho11. Đây là timing trước persistence, chưa chứng minh reconnect giữa transaction IndexedDB.
+
+DB cuối có đúng3 đơn mới #98–100 PAID, 3ledger, tender10.000/change5.000 mỗi đơn. Snapshot `../r5-offline-browser-evidence.json`. Không có dữ liệu demo hay test controls trong repo. TEST_GAP còn: fresh offline v1 end-to-end, reconnect giữa IndexedDB transaction, mạng OS và PWA điện thoại thật. Chưa chạy full suite cho bản vá; chưa commit/push/merge.
+
+## Correction sau review thanh toán commit 5750da9
+
+- Review độc lập phát hiện P1: fresh cash checkout khi đã offline bị early return `mutationOutcomeUnknown`, không tới nhánh lưu phiếu. Repro cùng điều kiện: baseline lưu 1 phiếu; 5750da9 lưu 0 phiếu và giữ trạng thái creating.
+- Bản sửa chưa commit: fresh checkout đã xác nhận đi thẳng vào `luuBanOffline` trước mọi request/trạng thái online. Retry của giao dịch đã gửi (kể cả reload) giữ nguyên đường exact retry, không chuyển thành phiếu offline. Khóa checkout trong lúc lưu; lỗi lưu giữ giỏ và mở lại nút. Asset POS JS tăng `20260911-r5-8`.
+- Test mới RED trước sửa, GREEN sau sửa: fresh offline lưu phiếu/không dispatch/không để trạng thái online; restored unknown retry/không sinh phiếu thứ hai. 112 pytest trong các file retry, loyalty UI, offline client/sync/UI và QR UI PASS; Node pos-request-r5, api-request-r5, pos-offline-ui PASS; syntax và diff check PASS.
+- Reviewer độc lập `review_payment_final` (GPT-5.6 Sol) đọc bản sửa và helper persistence, không tìm thấy actionable finding. Đây không phải Astra High acceptance.
+- Full-suite PASS ở commit 5750da9 không được tính cho bản vá chưa commit này. Chưa chạy lại full suite, chưa commit/push/merge. Browser/thiết bị thật cho luồng fresh offline mới còn TEST_GAP.
+
+
 Ngày: 2026-09-11. Trạng thái: **D1–D5 đã triển khai; owner xác nhận full-suite có concurrency PASS; nghiệm thu thiết bị/PWA thật còn OPEN**.
 
 ## Chốt baseline Plan 5

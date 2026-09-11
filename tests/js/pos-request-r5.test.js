@@ -23,6 +23,28 @@ async function main() {
     assert.equal(offlineWrites,0,'a sent request with unknown outcome must not become a second offline sale');
     await c.thuTaoDonDangDo(saved);
     assert.deepEqual(bodies[0],bodies[1]);
+    // Fresh offline checkout must never dispatch create; a restored attempt must retry it.
+    let creates=0, receipts=0, pending=null;
+    const fresh={checkoutBusy:false,pendingCashOrderId:null,checkoutOperationId:null,currentOrderId:null,
+        pendingCheckoutState:null,activeShift:{id:1},voucherBusy:false,paymentMethod:'cash',
+        currentVoucher:null,loyaltyPointsApplied:0,selectedCustomerId:null,cashTenderedAmount:100,total:100,
+        cart:[{product_id:1,product_name:'Item',price:100,quantity:1}],
+        window:{OfflineBan:{dangOffline:()=>true}},capNhatTienKhachDua(){},capNhatNutCheckout(){},
+        showToast(){},dich:k=>k,dinhDangTien:v=>v,dinhDangSoPOS:v=>v,xacNhan:async()=>true,
+        taoOperationId:()=> 'fresh-op',taoTrangThaiCheckout:body=>(pending={phase:'creating',create_payload:body}),
+        luuBanOffline:async s=>{assert.equal(s.create_payload.operation_id,'fresh-op');receipts++;},
+        thuTaoDonDangDo:async()=>creates++,docCheckoutDangDo:()=>pending};
+    vm.createContext(fresh);
+    vm.runInContext(section('async function checkout(', 'async function thuTienMatDonDangCho('),fresh);
+    await fresh.checkout();
+    assert.equal(receipts,1,'fresh offline cash sale must record a receipt');
+    assert.equal(creates,0,'fresh offline cash sale must not send create');
+    assert.equal(pending,null,'offline sale must not leave ambiguous online state');
+    fresh.checkoutOperationId='already-sent';
+    fresh.pendingCheckoutState=JSON.parse(JSON.stringify(state));
+    await fresh.checkout();
+    assert.equal(creates,1,'restored unknown operation still retries online even while offline');
+    assert.equal(receipts,1,'restored unknown operation must not become another receipt');
     let opened=false;
     const receiptContext={posMobileCartMedia:{matches:true},cart:[],duLieuHoaDonHienTai:{id:93},
         document:{body:{classList:{add(){}}},getElementById:id=>({style:{display:'block'},hidden:true,removeAttribute(){},setAttribute(){},focus(){},classList:{add(){if(id==='posCheckoutColumn')opened=true;}}})}};

@@ -3286,6 +3286,23 @@ async function checkout() {
         operation_id: taoOperationId()
     };
     if(selectedCustomerId !== null) body.customer_id = selectedCustomerId;
+    // Only this fresh checkout has never dispatched a request. Restored attempts
+    // take the retry branch above, so a lost response cannot become a second sale.
+    if (window.OfflineBan?.dangOffline() && paymentMethod === 'cash'
+        && !body.voucher_code && body.loyalty_points_to_use === 0) {
+        if (checkoutBusy || checkoutOperationId || currentOrderId) return;
+        checkoutBusy = true;
+        capNhatNutCheckout();
+        try {
+            await luuBanOffline({ operation_id: body.operation_id, create_payload: body, payment_method: paymentMethod });
+        } catch (error) {
+            showToast(error.message);
+        } finally {
+            checkoutBusy = false;
+            capNhatNutCheckout();
+        }
+        return;
+    }
     checkoutOperationId = body.operation_id;
     const state = taoTrangThaiCheckout(body);
     await thuTaoDonDangDo(state);

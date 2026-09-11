@@ -653,6 +653,45 @@ async function main() {
     assert.equal(fake.inspect('fselling-offline', 'phieu').length, 0);
     assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, readyBeforeV0Sync);
 
+    // Real POS checkout -> luuBanOffline -> v1 persistence (only DOM is stubbed).
+    await api.prepareV1({ shop_id: 1, username: 'alice', products: catalog4 });
+    navigator.onLine = false;
+    const posSource = fs.readFileSync('static/js/pos.js', 'utf8');
+    const section = (a, b) => posSource.slice(posSource.indexOf(a), posSource.indexOf(b, posSource.indexOf(a)));
+    let onlineCreates = 0, notices = [];
+    const pos = {
+        window: { OfflineBan: api }, OfflineBan: api, localStorage,
+        checkoutBusy: false, pendingCashOrderId: null, checkoutOperationId: null,
+        currentOrderId: null, currentShopId: 1, activeShift: { id: 1 }, voucherBusy: false,
+        paymentMethod: 'cash', currentVoucher: null, loyaltyPointsApplied: 0, selectedCustomerId: null,
+        cashTenderedAmount: 60000, total: 56000,
+        cart: [{ product_id: 2, product_name: catalog4[1].name, price: 28000, quantity: 2 }],
+        capNhatTienKhachDua() {}, capNhatNutCheckout() {}, calcCart() {}, boChonKhach() {},
+        capNhatHuyHieuOffline: async () => {}, xoaCheckoutDangDo() {},
+        document: { getElementById: () => null }, showToast: msg => notices.push(msg),
+        dich: key => key, dinhDangTien: v => v, dinhDangSoPOS: v => v,
+        xacNhan: async () => true, taoOperationId: () => 'pos-v1-integration-1',
+        taoTrangThaiCheckout: () => { throw Error('offline must not create online pending state'); },
+        thuTaoDonDangDo: async () => { onlineCreates++; }
+    };
+    vm.createContext(pos);
+    vm.runInContext(section('async function luuBanOffline(', 'async function thuTaoDonDangDo(')
+        + section('async function checkout(', 'async function thuTienMatDonDangCho('), pos);
+    const v1Before = fake.inspect('fselling-offline', 'receipt_v1').length;
+    await pos.checkout();
+    assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, v1Before + 1,
+        `fresh POS must persist exactly one v1 receipt: ${notices}`);
+    assert.equal(fake.inspect('fselling-offline', 'phieu').length, 0, 'no v0 fallback');
+    assert.equal(pos.cart.length, 0);
+    assert.equal(pos.checkoutBusy, false);
+    assert.equal(onlineCreates, 0);
+    // A restored, previously sent operation must bypass offline persistence.
+    pos.checkoutOperationId = 'previously-sent';
+    pos.pendingCheckoutState = { phase: 'creating', operation_id: 'previously-sent' };
+    await pos.checkout();
+    assert.equal(onlineCreates, 1);
+    assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, v1Before + 1);
+
     // Opening a forward version triggers production onversionchange and closes cache.
     const closedBefore = fake.closedConnections;
     const upgrade = indexedDB.open('fselling-offline', 4);

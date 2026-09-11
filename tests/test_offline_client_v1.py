@@ -110,7 +110,7 @@ def test_all_touched_static_files_have_i09_g2h_cache_buster():
     pos = _read("static/pos.html")
     assert '/js/auth.js?v=20260901-fnb-r1b' in index
     assert '/js/offline-ban.js?v=20260813-i09-f3&g=20260813-i09-g2h6' 
-    assert '/js/pos.js?v=20260911-r5-7' in pos
+    assert '/js/pos.js?v=20260911-r5-8' in pos
 
 
 def test_capability_refresh_is_independent_of_catalog_success_and_reconnects():
