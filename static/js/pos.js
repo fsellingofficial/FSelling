@@ -414,14 +414,17 @@ function docCheckoutDangDo() {
 }
 
 function luuCheckoutDangDo(state) {
-    pendingCheckoutState = {
+    const saved = {
         ...state,
         version: 2,
         username: localStorage.getItem('username') || 'anonymous',
         saved_at: new Date().toISOString()
     };
-    ghiSessionJson(checkoutStorageKey(), pendingCheckoutState);
-    return pendingCheckoutState;
+    // Offline allocation can leave a durable DRAFT: never start without a retry key.
+    if (saved.phase === 'offline_pending') sessionStorage.setItem(checkoutStorageKey(), JSON.stringify(saved));
+    else ghiSessionJson(checkoutStorageKey(), saved);
+    pendingCheckoutState = saved;
+    return saved;
 }
 
 function xoaCheckoutDangDo() {
@@ -1845,7 +1848,7 @@ function renderCashQuickAmounts() {
         }))
     ];
     box.innerHTML = choices.map(({ amount, label }) => `
-        <button type="button" onclick="datTienKhachDua(${amount})" ${pendingCheckoutState?.cash_pay_payload ? 'disabled' : ''}>${label}</button>
+        <button type="button" onclick="datTienKhachDua(${amount})" ${pendingCheckoutState?.cash_pay_payload || pendingCheckoutState?.phase === 'offline_pending' ? 'disabled' : ''}>${label}</button>
     `).join('');
 }
 
@@ -1855,7 +1858,8 @@ function datTienKhachDua(amount) {
 
 function capNhatTienKhachDua() {
     const input = document.getElementById('cashTenderedInput');
-    const fixedTender = pendingCheckoutState?.cash_pay_payload?.tendered_amount;
+    const fixedTender = pendingCheckoutState?.phase === 'offline_pending'
+        ? pendingCheckoutState.tendered_amount : pendingCheckoutState?.cash_pay_payload?.tendered_amount;
     cashTenderedAmount = fixedTender ?? (input ? docGiaTriTien(input.value) : 0);
     if (input) {
         input.disabled = fixedTender !== undefined;
@@ -1889,13 +1893,14 @@ function posRequestUi(method = 'GET') {
 
 function capNhatNutCheckout() {
     const tenderInput = document.getElementById('cashTenderedInput');
-    if (tenderInput) tenderInput.disabled = checkoutBusy || Boolean(pendingCheckoutState?.cash_pay_payload);
+    if (tenderInput) tenderInput.disabled = checkoutBusy || Boolean(pendingCheckoutState?.cash_pay_payload || pendingCheckoutState?.phase === 'offline_pending');
     document.querySelectorAll('#cashQuickAmounts button').forEach(button => {
-        button.disabled = checkoutBusy || Boolean(pendingCheckoutState?.cash_pay_payload);
+        button.disabled = checkoutBusy || Boolean(pendingCheckoutState?.cash_pay_payload || pendingCheckoutState?.phase === 'offline_pending');
     });
     const status = document.getElementById('posCheckoutStatus');
     if (status) status.textContent = checkoutBusy ? dich('pos.processing')
         : pendingCashOrderId ? dich('pos.cash.pending_order', {id:pendingCashOrderId})
+        : pendingCheckoutState?.phase === 'offline_pending' ? dich('pos.payment.restored_offline')
         : pendingCheckoutState?.operation_id ? dich('common.session.mutation_unknown') : '';
 
     const button = document.getElementById('btnCheckout');
@@ -1914,7 +1919,7 @@ function capNhatNutCheckout() {
         : (pendingCashOrderId
             ? htmlNut('ph-arrow-clockwise', 'pos.checkout.retry_cash')
             : (checkoutOperationId
-                ? htmlNut('ph-arrow-clockwise', 'pos.checkout.retry_create')
+                ? htmlNut('ph-arrow-clockwise', pendingCheckoutState?.phase === 'offline_pending' ? 'pos.checkout.retry_offline' : 'pos.checkout.retry_create')
                 : htmlNut('ph-check-circle', 'pos.checkout.complete')));
     if (checkoutBusy) button.title = dich('pos.processing');
     else if (!activeShift) button.title = dich('pos.checkout.open_shift_title');
@@ -1925,12 +1930,12 @@ function capNhatNutCheckout() {
     capNhatLuaChonBoUuDaiOffline();
 }
 
-function taoTrangThaiCheckout(body) {
+function taoTrangThaiCheckout(body, phase = 'creating') {
     const customerText = selectedCustomerId !== null
         ? document.getElementById('khachDaChon')?.innerText || ''
         : '';
     return luuCheckoutDangDo({
-        phase: 'creating',
+        phase,
         shop_id: currentShopId,
         operation_id: body.operation_id,
         order_id: null,
@@ -1962,10 +1967,10 @@ function taoTrangThaiCheckout(body) {
 function phucHoiCheckoutDangDo() {
     const state = pendingCheckoutState || docCheckoutDangDo();
     if (!state || Number(state.shop_id) !== Number(currentShopId)) return false;
-    if (!['creating', 'cash_pending', 'transfer_pending'].includes(state.phase)) return false;
+    if (!['creating', 'offline_pending', 'cash_pending', 'transfer_pending'].includes(state.phase)) return false;
 
     pendingCheckoutState = state;
-    checkoutOperationId = state.phase === 'creating' ? state.operation_id : null;
+    checkoutOperationId = ['creating', 'offline_pending'].includes(state.phase) ? state.operation_id : null;
     currentOrderId = state.order_id ? Number(state.order_id) : null;
     pendingCashOrderId = state.phase === 'cash_pending' && currentOrderId
         ? currentOrderId
@@ -2063,7 +2068,7 @@ function phucHoiCheckoutDangDo() {
     } else if (state.phase === 'cash_pending' && currentOrderId) {
         showToast(dich('pos.payment.restored_cash', { id: currentOrderId }));
     } else {
-        showToast(dich('pos.payment.restored_unknown'));
+        showToast(dich(state.phase === 'offline_pending' ? 'pos.payment.restored_offline' : 'pos.payment.restored_unknown'));
     }
     capNhatNutCheckout();
     return true;
@@ -3064,12 +3069,13 @@ async function luuBanOffline(state) {
     ) {
         throw new Error(dich(khoaThongBaoRetryUuDai(payload)));
     }
+    const offlineRetry = state.phase === 'offline_pending';
     const phieu = await OfflineBan.luuPhieuTuPOS({
-        shop_id: Number(currentShopId),
+        shop_id: Number(offlineRetry ? state.shop_id : currentShopId),
         username: localStorage.getItem('username') || '',
         creation_key: state.operation_id,
-        items: cart,
-        cash_tendered: cashTenderedAmount,
+        items: offlineRetry ? state.cart : cart,
+        cash_tendered: offlineRetry ? state.tendered_amount : cashTenderedAmount,
         device_label: localStorage.getItem('username') || null,
         payment_method: state.payment_method,
         voucher_code: payload.voucher_code || null,
@@ -3092,6 +3098,22 @@ async function luuBanOffline(state) {
     await capNhatHuyHieuOffline();
     showToast(dich('pos.offline.da_luu_phieu'));
     return phieu;
+}
+
+async function thuLuuOfflineDangDo(state) {
+    if (checkoutBusy || state?.phase !== 'offline_pending') return;
+    checkoutBusy = true;
+    checkoutOperationId = state.operation_id;
+    capNhatNutCheckout();
+    try {
+        luuCheckoutDangDo(state);
+        await luuBanOffline(state);
+    } catch (error) {
+        showToast(error.message);
+    } finally {
+        checkoutBusy = false;
+        capNhatNutCheckout();
+    }
 }
 
 async function thuTaoDonDangDo(state) {
@@ -3192,6 +3214,7 @@ async function checkout() {
             return moModalMoCa();
         }
         const state = pendingCheckoutState || docCheckoutDangDo();
+        if (state?.phase === 'offline_pending') return thuLuuOfflineDangDo(state);
         return thuTaoDonDangDo(state);
     }
     if (currentOrderId) return showToast(dich('pos.checkout.order_exists'));
@@ -3291,15 +3314,11 @@ async function checkout() {
     if (window.OfflineBan?.dangOffline() && paymentMethod === 'cash'
         && !body.voucher_code && body.loyalty_points_to_use === 0) {
         if (checkoutBusy || checkoutOperationId || currentOrderId) return;
-        checkoutBusy = true;
-        capNhatNutCheckout();
         try {
-            await luuBanOffline({ operation_id: body.operation_id, create_payload: body, payment_method: paymentMethod });
+            const state = taoTrangThaiCheckout(body, 'offline_pending');
+            await thuLuuOfflineDangDo(state);
         } catch (error) {
             showToast(error.message);
-        } finally {
-            checkoutBusy = false;
-            capNhatNutCheckout();
         }
         return;
     }

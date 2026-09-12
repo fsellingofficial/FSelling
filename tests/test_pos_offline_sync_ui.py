@@ -48,8 +48,8 @@ def test_i09_f3_cache_busters_cover_every_changed_pos_asset():
     html = _read("static/pos.html")
     for asset, expected_v in [
         ("pos.css", "20260911-r5-5"),
-        ("locales/pos.js", "20260911-r5-7"),
+        ("locales/pos.js", "20260912-r5-9"),
         ("offline-ban.js", "20260813-i09-f3&g=20260813-i09-g2h6"),
-        ("pos.js", "20260911-r5-8"),
+        ("pos.js", "20260912-r5-9"),
     ]:
         assert f"/{'css/' if asset == 'pos.css' else 'js/'}{asset}?v={expected_v}" in html

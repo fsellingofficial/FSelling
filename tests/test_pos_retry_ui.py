@@ -13,7 +13,8 @@ def test_checkout_retry_state_survives_reload_and_keeps_exact_create_payload():
 
     assert "POS_CHECKOUT_STORAGE_PREFIX" in js
     assert "sessionStorage.setItem(key, JSON.stringify(value))" in js
-    assert "phase: 'creating'" in js
+    assert "function taoTrangThaiCheckout(body, phase = 'creating')" in js
+    assert "taoTrangThaiCheckout(body, 'offline_pending')" in js
     assert "state.create_payload" in js
     assert "checkoutOperationId = state.operation_id" in js
     assert "state.phase = 'cash_pending'" in js

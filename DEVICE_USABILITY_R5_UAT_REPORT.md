@@ -1,5 +1,58 @@
 # Device Usability & PWA R5 — báo cáo kiểm chứng
 
+## Review cuối bản sửa v0/v1 — đạt code-readiness
+
+Astra High (`astra_final_review`) review read-only diff cuối so với HEAD `a0505c5`: không còn P0/P1/P2 có bằng chứng trong phạm vi review. Xác nhận đã xử lý DRAFT→READY lỗi, reconnect→ACK→retry, fallback v0, immutable intent/identity và credential gốc khi finalize. Ba harness pos-request-r5, offline-ban-v1, offline-ban-sync-v1 và git diff --check PASS. Probe hai request cùng key tạo đúng một receipt và một binding; một caller có thể gặp lỗi finalize cạnh tranh nhưng retry cùng key thành công, intent khác bị từ chối.
+
+Full-suite owner PASS 2.823,9 giây vẫn là gate của bản runtime/test hiện tại; sau đó chỉ sửa báo cáo. Review này thay thế trạng thái thiếu review do quota ở các mục lịch sử bên dưới. Chưa commit/push/merge/deploy. Giới hạn giữ nguyên: binding lưu lâu dài; phiếu đã dọn hoặc credential sealed cần đối soát/recovery; TEST_GAP browser/thiết bị không được nâng thành PASS.
+
+## Owner full-suite PASS — bản sửa offline v0/v1
+
+Owner gửi kết quả `test-commit.ps1 -TestOnly -WithConcurrency`: TEST PASS, 2.823,9 giây (47 phút 3,9 giây), bỏ qua commit đúng theo TestOnly. Kiểm tra lại worktree `C:\Users\nguye\.codex\worktrees\7a90\python_app`, nhánh `codex/device-usability-pwa-plan5`, HEAD `a0505c5`; bản sửa vẫn chưa commit. Sau kết quả này chỉ cập nhật báo cáo, không sửa runtime/test hay chạy lại full-suite.
+
+Phạm vi bản sửa được test gồm offline_pending của POS và binding bền vững cho cả v1 lẫn fallback v0 Phase A. Review Astra vòng v1 đã xác nhận hướng mapping xử lý ACK, nhưng phát hiện v0 chưa idempotent. Sau đó đã sửa v0 ghi binding cùng transaction phiếu, giữ binding sau xóa/đồng bộ để retry không tạo lại; regression v0 tái hiện hai UUID trước sửa và PASS sau sửa. Nhóm 123 focused test cũng PASS sau thay đổi v0.
+
+Review độc lập bản sửa v0 cuối cùng còn thiếu vì Astra chạm hạn mức trước khi review lại. Full-suite PASS không thay thế review hoặc kiểm chứng giao diện retry mới trên thiết bị. Chưa commit/push/merge/deploy. Mục này thay thế các ghi chú lịch sử bên dưới còn nói full-suite chưa chạy hoặc review đang chạy.
+
+## Bản sửa P1 lưu offline dở dang — 2026-09-12, chưa commit
+
+Vòng tiếp theo: Astra chạy lại được, xác nhận thêm P1 sau auto-sync ACK: tombstone bỏ creation_key nên retry vẫn tạo phiếu mới; trạng thái RETRYABLE cũng kẹt finalize. Đã bổ sung mapping `creation:key` trong meta_v1, ghi cùng transaction DRAFT, chứa UUID/hash request và identity, không chứa token hay nội dung giỏ. Lookup trước allocation/catalog mới; replay READY/SYNCING/RETRYABLE/ACKED không đổi trạng thái đồng bộ. Lease cũ đã seal hoặc DRAFT không còn đủ điều kiện vẫn chặn; ACK hết hạn bị cleanup thì mapping ngăn tạo lại và yêu cầu đối soát. Mapping giữ vô thời hạn để không mở lại khả năng tạo trùng qua retry cũ.
+
+Regression actual POS + offline engine + sync engine/FakeIndexedDB: trước sửa mapping, ACK rồi retry tạo 2 receipt (RED); sau sửa chỉ 1 ACKED order901. Kiểm thêm SYNCING/RETRYABLE không đổi state, replay sau đổi catalog/lease, từ chối đổi tender/user và cleanup ACK 30 ngày vẫn không tạo phiếu mới. Node harness PASS, 123 focused pytest PASS sau sửa engine; toàn bộ static JavaScript qua node --check. Astra đang review vòng mapping mới. Chưa chạy full-suite cho bản này.
+
+Trạng thái mới nhất: worktree `7a90`, nhánh `codex/device-usability-pwa-plan5`, HEAD `a0505c5`; có thay đổi runtime/test chưa commit. Các mục bên dưới ghi lại bằng chứng của bản trước, không thay thế kiểm chứng bản sửa này.
+
+POS lưu trạng thái `offline_pending` với cùng operation/creation key, giỏ và tiền khách đưa vào sessionStorage trước khi gọi offline engine. Nếu không lưu được retry state thì dừng trước allocation. Khi lưu DRAFT rồi lỗi READY, giữ giao dịch để retry/reload cùng intent; không dispatch online create và không cấp key mới. Khoá sửa tiền trong trạng thái này. Asset POS JS/locale đổi sang `20260912-r5-9`.
+
+Automated: nhóm pytest POS retry, offline client v1/sync/UI, loyalty UI, QR và i18n gồm 123 test PASS (exit 0). Sau đó tăng cường harness bằng production taoTrangThaiCheckout/phucHoiCheckoutDangDo thay cho stub; Node offline-ban-v1 và pos-request-r5 đều PASS. Fault sau DRAFT durable được tái hiện bằng FakeIndexedDB: reload khôi phục đúng key, quantity2 và tender60000; retry rồi recovery không tăng receipt count, không gọi online create. Session storage failure dừng trước allocation. `git diff --check` PASS. Đây là automated integration với DOM/IndexedDB giả, chưa phải fault test trên điện thoại.
+
+Lượt follow-up Astra High đầu tiên báo hết hạn mức; đã chạy lại và tìm lỗi ACK nêu trên. Verdict CHANGES REQUIRED bên dưới là của bản a0505c5 trước sửa; vòng mapping mới chưa có verdict. Full-suite owner PASS 2.893,6 giây và Android happy path cũng thuộc bản trước, không nhận là PASS cho runtime hiện tại. Còn chờ review độc lập, full-suite và kiểm chứng giao diện retry mới. Chưa commit/push/merge/deploy.
+
+## Final review Astra High — CHANGES REQUIRED
+
+Reviewer `astra_final_review`, GPT-6 Astra reasoning High, read-only range18eca4a..a0505c5, xác nhận một P1 tại static/js/pos.js:3291–3304: fresh offline checkout không giữ exact creation_key/intent nếu lưu lỗi sau DRAFT durable. Offline engine commit DRAFT+sequence trước fingerprint/READY; lỗi ở write READY khiến UI chỉ toast rồi mở khóa. Bấm lại cấp operation mới; recovery có thể đưa cả DRAFT cũ và phiếu mới thành READY, dẫn tới hai sale cho một lần thu tiền.
+
+Reviewer tái hiện bằng actual checkout + actual offline engine và FakeIndexedDB hiện hữu, inject QuotaExceededError riêng tại write READY sau digest. Sau lỗi: pending=null, operation=null, DRAFT fresh-op-1 sequence1. Sau bấm lại và recovery: READY fresh-op-1 sequence1 total52000 và READY fresh-op-2 sequence2 total52000. Backend dedup UUID/lease+sequence không gộp hai intent khác nhau này.
+
+Cần sửa: giữ durable offline-specific exact key+intent trước allocation và retry cùng intent qua lỗi/reload; không đưa vào phase creating để gọi nhầm online create. Thêm regression fail sau DRAFT durable (khác fail allocation), kiểm đúng1READY qua retry/reload/recovery. Chưa sửa runtime trong vòng review này.
+
+8 Node harness hiện có PASS: api-request-r5, pos-request-r5, offline-ban-v1, fnb-r1a, fnb-station-r1b, seller-partial-r5, pwa-r5, auth-sessions-r4; custom fault probe vẫn phát hiện P1. Không xác nhận thêm actionable P0/P1/P2 trong phần trace. Verdict chưa đạt code readiness; full-suite owner và Android happy path không bao phủ lỗi lưu dở dang này. Chưa chuẩn bị release/merge acceptance.
+
+## Android thật: owner xác nhận offline → mở lại → đồng bộ
+
+Owner xác nhận giỏ 1 Lavie tổng5.000đ/tender10.000đ; sau hướng dẫn tắt Wi-Fi và dữ liệu di động, báo lưu thành công/giỏ trống/1đơn chờ; về màn hình chính mở lại PWA vẫn còn phiếu; bật mạng đồng bộ thành công. Đây là owner-reported physical-device evidence, không phải agent trực tiếp quan sát điện thoại.
+
+Đối chiếu read-only DB pilot `../android-pwa-20260912/demo.db`: chỉ1đơn mới #98 PAID, 1item product1 quantity1, total5.000/tender10.000/change5.000; chỉ1ledger #97 SALE_CASH5.000; tồn Lavie14→13 so DB nguồn dùng để sao chép. Registry xác nhận contract_version=1, state=INGESTED: đây là phiếu offline v1. Offline UUID `off-cbcc1287-54f9-4bee-bfed-31e3d89ab591`. Không lẫn với #98 ở DB browser mô phỏng khác. Phạm vi này xác nhận luồng offline thực tế giữ phiếu qua chuyển nền/mở lại rồi đồng bộ không nhân đơn/ledger trong lần thử. Không suy rộng thành cold-start/force-stop hoặc mất mạng đúng lúc server commit.
+
+## Trạng thái hiện tại sau nghiệm thu Android — 2026-09-12
+
+- Nhánh `codex/device-usability-pwa-plan5`, runtime HEAD `a0505c5`, triển khai Plan5 tại `5750da9`. Bản vá đã commit; hiện chỉ báo cáo nghiệm thu thay đổi.
+- Full-suite có concurrency: owner PASS 2.893,6 giây; không chạy lại khi runtime/test không đổi. Focused112 và17 có phạm vi trùng nhau, không cộng thành tổng test riêng.
+- Android thật: owner xác nhận cài/mở PWA, bán tiền mặt khi tắt Wi-Fi/dữ liệu di động, chuyển nền/mở lại giữ1phiếu, bật mạng đồng bộ. DB độc lập xác nhận offline v1 INGESTED, đúng1đơn/1ledger/1lần trừ kho. Không yêu cầu lặp lại các bước này.
+- Review bản vá của GPT-5.6 Sol không còn actionable finding. Review cuối Astra High trên range18eca4a..a0505c5: CHANGES REQUIRED, 1 P1 partial-persistence offline (xem đầu báo cáo).
+- Còn chưa chứng minh: cold-start/force-stop lúc offline, reconnect giữa transaction IndexedDB, mất phản hồi đúng lúc commit trên thiết bị thật, update PWA hai tab, accessibility/role-device matrix đầy đủ. Các ca browser mô phỏng và automated giữ nhãn riêng; không nhận toàn bộ release production acceptance.
+- Tiếp theo: xử lý findings nếu có, chốt báo cáo và chuẩn bị PR để owner duyệt. Chưa push/merge/deploy. Các mục bên dưới là nhật ký theo thời điểm; trạng thái hiện tại ở mục này và bằng chứng Android phía trên được ưu tiên khi có ghi chú cũ đã bị thay thế.
+
 ## Owner gate bản vá offline — 2026-09-12
 
 Owner duyệt ngoại lệ commit trực tiếp sau full-suite PASS để tránh chạy lại gate; vẫn kiểm tra diff và chặn tên file/giá trị secret trước commit. Không sửa script commit hoặc bỏ test khỏi bộ kiểm tra.

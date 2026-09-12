@@ -991,7 +991,7 @@
         };
     }
 
-    function allocateDraftV1(context, normalized, tendered, creationKey) {
+    function allocateDraftV1(context, normalized, tendered, creationKey, requestDigest) {
         const credential = context.credential;
         const clockKey = 'clock:' + credential.lease_id;
         const sequenceKey = 'sequence:' + credential.lease_id;
@@ -1024,21 +1024,37 @@
                             return;
                         }
                         const creationIntent = localCreationIntentV1(fresh, normalized, tendered);
-                        const existingRequest = receipts.getAll();
-                        existingRequest.onsuccess = function () {
-                            const existing = (existingRequest.result || []).find(row =>
-                                row.local_creation_key === creationKey
-                            );
-                            if (existing) {
-                                if (existing.local_creation_intent !== creationIntent) {
-                                    huy(new Error('creation_key đã bind với immutable intent khác'));
+                        const bindingKey = 'creation:' + creationKey;
+                        const bindingRequest = meta.get(bindingKey);
+                        bindingRequest.onsuccess = function () {
+                            if (bindingRequest.result) { datKetQua(null); return; }
+                            findExisting();
+                        };
+                        function bind(draft) {
+                            // ponytail: retain compact retry bindings indefinitely; pruning requires proof no stale POS retry exists.
+                            meta.put({ key: bindingKey, offline_uuid: draft.offline_uuid,
+                                request_digest: requestDigest, identity_key: draft.identity_key,
+                                username: draft.username, user_id: draft.user_id,
+                                shop_id: draft.shop_id, device_id: draft.device_id, lease_id: draft.lease_id });
+                        }
+                        function findExisting() {
+                            const existingRequest = receipts.getAll();
+                            existingRequest.onsuccess = function () {
+                                const existing = (existingRequest.result || []).find(row =>
+                                    row.local_creation_key === creationKey
+                                );
+                                if (existing) {
+                                    if (existing.local_creation_intent !== creationIntent) {
+                                        huy(new Error('creation_key đã bind với immutable intent khác'));
+                                        return;
+                                    }
+                                    bind(existing);
+                                    datKetQua(existing);
                                     return;
                                 }
-                                datKetQua(existing);
-                                return;
-                            }
-                            allocateNew();
-                        };
+                                allocateNew();
+                            };
+                        }
                         function allocateNew() {
                             let perf;
                             let uuid;
@@ -1104,6 +1120,7 @@
                                         value: sequence
                                     });
                                     receipts.add(draft);
+                                    bind(draft);
                                     datKetQua(draft);
                                 } catch (e) { huy(e); }
                             }
@@ -1191,8 +1208,40 @@
         return ready;
     }
 
+    async function replayCreationV1(binding, options, requestDigest) {
+        if (binding.request_digest !== requestDigest || binding.username !== usernameHienTai()
+            || binding.username !== options.username || binding.shop_id !== Number(options.shop_id)
+            || (options.user_id && binding.user_id !== Number(options.user_id))
+            || binding.device_id !== await layDeviceId()) {
+            throw new Error('creation_key đã bind với immutable intent hoặc identity khác');
+        }
+        if (binding.contract_version === 0) {
+            const legacy = await chay(KHO_PHIEU, 'readonly', store => store.get(binding.offline_uuid));
+            if (!legacy) throw new Error('Phiếu đã lưu không còn tại máy; cần đối soát, không tạo lại');
+            return banSao(legacy);
+        }
+        const credential = await chay(KHO_CREDENTIAL_V1, 'readonly', store => store.get(binding.lease_id));
+        if (!credential || credential.sealed === true || credential.identity_key !== binding.identity_key) {
+            throw new Error('Credential của phiếu đã khóa; cần khôi phục offline');
+        }
+        const receipt = await chay(KHO_PHIEU_V1, 'readonly', store => store.get(binding.offline_uuid));
+        if (!receipt) throw new Error('Phiếu đã lưu không còn tại máy; cần đối soát, không tạo lại');
+        if (receipt.state === 'DRAFT') return finalizeReceiptV1(receipt.offline_uuid, binding);
+        if (['READY', 'SYNCING', 'RETRYABLE', 'ACKED'].includes(receipt.state)) return banSao(receipt);
+        throw new Error('Phiếu đã lưu đang bị chặn; cần khôi phục offline');
+    }
+
+    async function creationRequestDigest(options) {
+        const input = chuanHoaItems(options.items, (options.items || []).map(item => ({
+            id: item.product_id, name: chuanHoaTen(item.product_name), is_active: true,
+            price_vnd: Object.prototype.hasOwnProperty.call(item, 'unit_price_vnd') ? item.unit_price_vnd : item.price
+        })));
+        const tendered = soNguyen(options.cash_tendered, 0, MAX_VND, 'cash_tendered');
+        if (tendered < input.total) throw new Error('Tiền khách đưa chưa đủ');
+        return sha256(JSON.stringify([Number(options.shop_id), options.username, input.items, tendered]));
+    }
+
     async function createReceiptV1(options) {
-        if (!dangOffline()) throw new Error('Receipt v1 chỉ được tạo khi navigator.onLine === false');
         if (!options || options.payment_method !== 'cash'
             || options.voucher_code || Number(options.loyalty_points_to_use) !== 0
             || options.qr === true || options.debt === true) {
@@ -1204,17 +1253,20 @@
         if (creationKey.length < 8 || creationKey.length > 128) {
             throw new Error('creation_key phải dài 8..128 ký tự');
         }
+        // Validate canonical input independently of a possibly renewed catalog.
+        const requestDigest = await creationRequestDigest(options);
+        const tendered = soNguyen(options.cash_tendered, 0, MAX_VND, 'cash_tendered');
+        await applyPendingSealsV1();
+        const bindingKey = 'creation:' + creationKey;
+        const binding = await chay(KHO_META_V1, 'readonly', store => store.get(bindingKey));
+        if (binding) return replayCreationV1(binding, options, requestDigest);
+        if (!dangOffline()) throw new Error('Receipt v1 chỉ được tạo khi navigator.onLine === false');
         const usable = await usableV1({ shop_id: shopId, username, user_id: options.user_id });
         if (!usable) return null;
         const normalized = chuanHoaItems(options.items, usable.catalog.rows);
-        const tendered = soNguyen(options.cash_tendered, 0, MAX_VND, 'cash_tendered');
-        if (tendered < normalized.total) throw new Error('Tiền khách đưa chưa đủ');
-        const draft = await allocateDraftV1(usable, normalized, tendered, creationKey);
-        return finalizeReceiptV1(draft.offline_uuid, {
-            shop_id: shopId,
-            user_id: usable.credential.user_id,
-            username
-        });
+        await allocateDraftV1(usable, normalized, tendered, creationKey, requestDigest);
+        const saved = await chay(KHO_META_V1, 'readonly', store => store.get(bindingKey));
+        return replayCreationV1(saved, options, requestDigest);
     }
 
     async function listReadyV1(identity) {
@@ -2464,7 +2516,7 @@
     }
 
     // ---------- Contract v0 giữ nguyên ----------
-    function luuPhieu(shopId, gio_hang, tien_khach_dua, ten_may) {
+    function luuPhieu(shopId, gio_hang, tien_khach_dua, ten_may, binding) {
         const phieu = {
             offline_uuid: taoUuidV0(),
             shop_id: Number(shopId),
@@ -2482,7 +2534,18 @@
             luc_luu: Date.now(),
             loi: null
         };
-        return chay(KHO_PHIEU, 'readwrite', kho => kho.put(phieu)).then(() => phieu);
+        if (!binding) return chay(KHO_PHIEU, 'readwrite', kho => kho.put(phieu)).then(() => phieu);
+        return giaoDich([KHO_PHIEU, KHO_META_V1], 'readwrite', function (tx, done, abort) {
+            const meta = tx.objectStore(KHO_META_V1);
+            const existing = meta.get(binding.key);
+            existing.onsuccess = function () {
+                if (existing.result) { done(null); return; }
+                if (usernameHienTai() !== binding.username) { abort(new Error('Identity đã đổi')); return; }
+                tx.objectStore(KHO_PHIEU).put(phieu);
+                meta.put({...binding, offline_uuid: phieu.offline_uuid});
+                done(phieu);
+            };
+        });
     }
 
     async function luuPhieuTuPOS(options) {
@@ -2500,12 +2563,19 @@
                 : 'OFFLINE_CONTRACT_POLICY_REQUIRED';
             throw error;
         }
-        return luuPhieu(
+        const binding = {key: 'creation:' + options.creation_key, contract_version: 0,
+            username: options.username, user_id: Number(options.user_id) || null,
+            shop_id: Number(options.shop_id), device_id: await layDeviceId(),
+            request_digest: await creationRequestDigest(options)};
+        await luuPhieu(
             options.shop_id,
             options.items,
             options.cash_tendered,
-            options.device_label
+            options.device_label,
+            binding
         );
+        const saved = await chay(KHO_META_V1, 'readonly', store => store.get(binding.key));
+        return replayCreationV1(saved, options, binding.request_digest);
     }
 
     function docTatCa(shopId) {

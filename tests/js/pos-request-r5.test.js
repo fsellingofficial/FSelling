@@ -31,11 +31,12 @@ async function main() {
         cart:[{product_id:1,product_name:'Item',price:100,quantity:1}],
         window:{OfflineBan:{dangOffline:()=>true}},capNhatTienKhachDua(){},capNhatNutCheckout(){},
         showToast(){},dich:k=>k,dinhDangTien:v=>v,dinhDangSoPOS:v=>v,xacNhan:async()=>true,
-        taoOperationId:()=> 'fresh-op',taoTrangThaiCheckout:body=>(pending={phase:'creating',create_payload:body}),
-        luuBanOffline:async s=>{assert.equal(s.create_payload.operation_id,'fresh-op');receipts++;},
+        taoOperationId:()=> 'fresh-op',taoTrangThaiCheckout:(body,phase)=>(pending={phase,operation_id:body.operation_id,create_payload:body}),
+        luuCheckoutDangDo:s=>{pending=s;},
+        luuBanOffline:async s=>{assert.equal(s.create_payload.operation_id,'fresh-op');receipts++;pending=null;},
         thuTaoDonDangDo:async()=>creates++,docCheckoutDangDo:()=>pending};
     vm.createContext(fresh);
-    vm.runInContext(section('async function checkout(', 'async function thuTienMatDonDangCho('),fresh);
+    vm.runInContext(section('async function thuLuuOfflineDangDo(', 'async function thuTaoDonDangDo(')+section('async function checkout(', 'async function thuTienMatDonDangCho('),fresh);
     await fresh.checkout();
     assert.equal(receipts,1,'fresh offline cash sale must record a receipt');
     assert.equal(creates,0,'fresh offline cash sale must not send create');

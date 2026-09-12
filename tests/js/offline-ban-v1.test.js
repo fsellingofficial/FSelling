@@ -538,8 +538,8 @@ async function main() {
         row.lease_id === second.lease_id && row.sealed === true
     ));
     navigator.onLine = false;
-    await assert.rejects(api.createReceiptV1(receiptOptions), /immutable intent/,
-        'same operation key under a different lease must reject');
+    await assert.rejects(api.createReceiptV1(receiptOptions), /đã khóa/,
+        'same operation key from a sealed lease must reject');
     navigator.onLine = true;
 
     // Logout on a page without OfflineBan leaves this non-secret durable marker.
@@ -618,7 +618,7 @@ async function main() {
     // Eligibility and exact integer gates.
     navigator.onLine = true;
     await api.prepareV1({ shop_id: 1, username: 'alice', products: catalog2 });
-    await assert.rejects(api.createReceiptV1(receiptOptions), /navigator\.onLine/);
+    await assert.rejects(api.createReceiptV1({ ...receiptOptions, creation_key: 'fresh-online-denied' }), /navigator\.onLine/);
     navigator.onLine = false;
     await assert.rejects(api.createReceiptV1({ ...receiptOptions, payment_method: 'transfer' }), /tiền mặt/);
     await assert.rejects(api.createReceiptV1({ ...receiptOptions, cash_tendered: 1.5 }), /số nguyên/);
@@ -635,6 +635,7 @@ async function main() {
     navigator.onLine = false;
     assert.equal(await api.createReceiptV1({
         ...receiptOptions,
+        creation_key: 'fresh-no-usable-catalog',
         items: [{ ...receiptOptions.items[0], price: 27000 }]
     }), null);
     issueFailure = false;
@@ -658,24 +659,32 @@ async function main() {
     navigator.onLine = false;
     const posSource = fs.readFileSync('static/js/pos.js', 'utf8');
     const section = (a, b) => posSource.slice(posSource.indexOf(a), posSource.indexOf(b, posSource.indexOf(a)));
-    let onlineCreates = 0, notices = [];
+    let onlineCreates = 0, notices = [], nextPosKey = 0;
+    const posStorage = new Map();
     const pos = {
         window: { OfflineBan: api }, OfflineBan: api, localStorage,
         checkoutBusy: false, pendingCashOrderId: null, checkoutOperationId: null,
         currentOrderId: null, currentShopId: 1, activeShift: { id: 1 }, voucherBusy: false,
         paymentMethod: 'cash', currentVoucher: null, loyaltyPointsApplied: 0, selectedCustomerId: null,
         cashTenderedAmount: 60000, total: 56000,
+        subtotal: 56000, discount: 0, loyaltyPointsRequested: 0, loyaltyDiscount: 0,
+        selectedCustomerPointsBalance: 0, loyaltyProgram: null, selectedCustomerActive: false,
+        datThongBaoDiem() {}, apDungPhuongThucThanhToan() {}, updateUI() {},
+        docCheckoutDangDo: () => JSON.parse(posStorage.get('pos-state')),
         cart: [{ product_id: 2, product_name: catalog4[1].name, price: 28000, quantity: 2 }],
         capNhatTienKhachDua() {}, capNhatNutCheckout() {}, calcCart() {}, boChonKhach() {},
-        capNhatHuyHieuOffline: async () => {}, xoaCheckoutDangDo() {},
+        capNhatHuyHieuOffline: async () => {}, pendingCheckoutState: null,
+        sessionStorage: { setItem: (k,v) => posStorage.set(k,v) },
+        checkoutStorageKey: () => 'pos-state', ghiSessionJson: (k,v) => posStorage.set(k,JSON.stringify(v)),
+        xoaSessionKey: k => posStorage.delete(k),
         document: { getElementById: () => null }, showToast: msg => notices.push(msg),
         dich: key => key, dinhDangTien: v => v, dinhDangSoPOS: v => v,
-        xacNhan: async () => true, taoOperationId: () => 'pos-v1-integration-1',
-        taoTrangThaiCheckout: () => { throw Error('offline must not create online pending state'); },
+        xacNhan: async () => true, taoOperationId: () => `pos-v1-integration-${++nextPosKey}`,
         thuTaoDonDangDo: async () => { onlineCreates++; }
     };
     vm.createContext(pos);
-    vm.runInContext(section('async function luuBanOffline(', 'async function thuTaoDonDangDo(')
+    vm.runInContext(section('function luuCheckoutDangDo(', 'function movementStorageKey(') + section('async function luuBanOffline(', 'async function thuTaoDonDangDo(')
+        + section('function taoTrangThaiCheckout(', '// ===== Ca làm việc và sổ tiền mặt =====')
         + section('async function checkout(', 'async function thuTienMatDonDangCho('), pos);
     const v1Before = fake.inspect('fselling-offline', 'receipt_v1').length;
     await pos.checkout();
@@ -685,12 +694,125 @@ async function main() {
     assert.equal(pos.cart.length, 0);
     assert.equal(pos.checkoutBusy, false);
     assert.equal(onlineCreates, 0);
+    // Fail only the READY write after DRAFT was committed, then reload/retry.
+    pos.cart = [{product_id:2,product_name:catalog4[1].name,price:28000,quantity:2}];
+    const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+    let failReady = true;
+    crypto.subtle.digest = async function(algorithm, data) {
+        const result = await originalDigest(algorithm, data);
+        if (failReady && new TextDecoder().decode(data).startsWith('FS-OFFLINE-RECEIPT-v1')) {
+            failReady = false; fake.failNextWrite = 'receipt_v1';
+        }
+        return result;
+    };
+    try { await pos.checkout(); } finally { crypto.subtle.digest = originalDigest; }
+    assert(notices.some(x => /QuotaExceededError/.test(x)));
+    const afterFault = fake.inspect('fselling-offline', 'receipt_v1');
+    assert.equal(afterFault.length, v1Before + 2, 'DRAFT must already be durable');
+    assert.equal(pos.pendingCheckoutState?.phase, 'offline_pending', 'retain offline recovery state');
+    const failedKey = pos.pendingCheckoutState.operation_id;
+    const recoveryState = posStorage.get('pos-state');
+    pos.pendingCheckoutState = null; pos.checkoutOperationId = null; pos.cart = [];
+    assert.equal(pos.phucHoiCheckoutDangDo(), true);
+    assert.equal(pos.checkoutOperationId, failedKey);
+    assert.equal(pos.cart[0].quantity, 2);
+    assert.equal(pos.cashTenderedAmount, 60000);
+    pos.cart[0].quantity = 1; pos.cashTenderedAmount = 100000; // mutable UI must not change saved intent
+    await pos.checkout();
+    await api.finalizeDraftsV1({shop_id:1,user_id:11,username:'alice'});
+    assert.equal(fake.inspect('fselling-offline','receipt_v1').length,v1Before+2,'retry must not allocate a second receipt');
+    assert.equal(nextPosKey,2,'reload retry must reuse creation key');
+    assert.equal(onlineCreates,0);
+    assert.equal(pos.pendingCheckoutState,null);
+    // Failure to persist the retry key must stop before any IndexedDB allocation.
+    pos.cart = [{product_id:2,product_name:catalog4[1].name,price:28000,quantity:2}];
+    const saveState = pos.sessionStorage.setItem;
+    pos.sessionStorage.setItem = () => { throw Error('session quota'); };
+    await pos.checkout();
+    pos.sessionStorage.setItem = saveState;
+    assert.equal(fake.inspect('fselling-offline','receipt_v1').length,v1Before+2);
+    assert.equal(pos.pendingCheckoutState,null);
+    assert.equal(pos.checkoutBusy,false);
+    assert.equal(pos.cart.length,1,'unwritten receipt must retain cart');
     // A restored, previously sent operation must bypass offline persistence.
     pos.checkoutOperationId = 'previously-sent';
     pos.pendingCheckoutState = { phase: 'creating', operation_id: 'previously-sent' };
     await pos.checkout();
     assert.equal(onlineCreates, 1);
-    assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, v1Before + 1);
+    assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, v1Before + 2);
+
+    // Sync can finish while POS still has the persisted retry state.
+    const receiptStore = fake.databases.get('fselling-offline').stores.get('receipt_v1');
+    for (const [key, value] of receiptStore.data) {
+        if (value.local_creation_key !== failedKey) receiptStore.data.delete(key);
+    }
+    const savedReceipt = clone(fake.inspect('fselling-offline', 'receipt_v1')[0]);
+    const replayOptions = { shop_id: 1, username: 'alice', user_id: 11, creation_key: failedKey,
+        payment_method: 'cash', loyalty_points_to_use: 0, cash_tendered: 60000,
+        items: JSON.parse(recoveryState).cart };
+    for (const state of ['SYNCING', 'RETRYABLE']) {
+        receiptStore.data.set(keyString(savedReceipt.offline_uuid), { ...savedReceipt, state });
+        assert.equal((await api.createReceiptV1(replayOptions)).state, state);
+        assert.equal(fake.inspect('fselling-offline', 'receipt_v1')[0].state, state);
+    }
+    receiptStore.data.set(keyString(savedReceipt.offline_uuid), savedReceipt);
+    global.getToken = () => 'demo-token';
+    global.__FSellingOfflineSyncTestHooks = { fetch: async (path, options) => {
+        const body = JSON.parse(options.body);
+        assert(path.endsWith('/offline'));
+        return { status: 200, headers: { get: () => null }, text: async () => JSON.stringify({
+            contract_version: 1, offline_uuid: body.offline_uuid, order_id: 901, created: true,
+            total: body.items.reduce((sum, item) => sum + item.unit_price_vnd * item.quantity, 0),
+            sold_by_user_id: 11, synced_by_user_id: 11,
+            sold_at_effective: '2026-09-12 00:00:00.000000',
+            server_time_utc: '2026-09-12 00:00:00.000000', time_confidence: 'ANCHORED_CLIENT'
+        }) };
+    } };
+    navigator.onLine = true;
+    assert.equal((await api.triggerSyncV1({shop_id:1,user_id:11,username:'alice'})).acked, 1);
+    posStorage.set('pos-state', recoveryState);
+    pos.pendingCheckoutState = null; pos.checkoutOperationId = null;
+    assert.equal(pos.phucHoiCheckoutDangDo(), true);
+    navigator.onLine = false;
+    await pos.checkout();
+    assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, 1, 'ACK replay must never allocate another receipt');
+    assert.equal(pos.pendingCheckoutState, null);
+    // Catalog/lease replacement must not re-price or reallocate an already saved intent.
+    navigator.onLine = true;
+    const renewedCatalog = catalog4.map(row => ({ ...row, price: row.price + 1000 }));
+    nextDigest = await catalogDigest(renewedCatalog);
+    await api.prepareV1({shop_id:1,username:'alice',products:renewedCatalog});
+    assert.equal((await api.createReceiptV1(replayOptions)).order_id, 901);
+    await assert.rejects(api.createReceiptV1({...replayOptions,cash_tendered:61000}), /immutable intent/);
+    await assert.rejects(api.createReceiptV1({...replayOptions,user_id:12}), /identity/);
+    // Normal ACK cleanup must leave a binding that fails closed, never a fresh allocation.
+    const tombstone = fake.inspect('fselling-offline', 'receipt_v1')[0];
+    fake.databases.get('fselling-offline').stores.get('receipt_v1').data.set(
+        keyString(tombstone.offline_uuid), {...tombstone,acked_at:'2000-01-01T00:00:00.000Z'});
+    await api.triggerSyncV1({shop_id:1,user_id:11,username:'alice'});
+    assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, 0);
+    navigator.onLine = false;
+    await assert.rejects(api.createReceiptV1(replayOptions), /không tạo lại/);
+    assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, 0);
+
+    // Phase A legacy fallback must also keep one receipt across a POS crash/retry.
+    navigator.onLine = true;
+    const oldApiCall = global.apiCall;
+    global.apiCall = async path => path === '/offline/capability'
+        ? {supported_versions:[0,1],minimum_accepted_version:0,phase:'PHASE_A',cutoff_at_utc:null,policy_code:'OFFLINE_CONTRACT_PHASE_A_V0_V1'}
+        : oldApiCall(path);
+    await api.refreshContractPolicy({shop_id:1,username:'alice'}, true);
+    issueFailure = true;
+    await api.prepareV1({shop_id:1,username:'alice',products:catalog4.map(row=>({...row,price:row.price+5000}))});
+    issueFailure = false;
+    navigator.onLine = false;
+    const legacyOptions = {...replayOptions,creation_key:'legacy-pending-crash'};
+    const legacySaved = await api.luuPhieuTuPOS(legacyOptions);
+    assert.equal((await api.luuPhieuTuPOS(legacyOptions)).offline_uuid, legacySaved.offline_uuid);
+    assert.equal(fake.inspect('fselling-offline','phieu').length,1);
+    await api.xoaPhieu(legacySaved.offline_uuid);
+    await assert.rejects(api.luuPhieuTuPOS(legacyOptions), /không tạo lại/);
+    assert.equal(fake.inspect('fselling-offline','phieu').length,0);
 
     // Opening a forward version triggers production onversionchange and closes cache.
     const closedBefore = fake.closedConnections;

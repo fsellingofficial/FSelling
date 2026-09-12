@@ -67,7 +67,7 @@ def test_doi_ngon_ngu_khong_ghi_de_cau_hinh_dang_go():
 def test_pos_luu_nguyen_payload_diem_de_thu_lai_dung_mot_don():
     js = _read("static/js/pos.js")
     create_state = _function(
-        js, "function taoTrangThaiCheckout(body)", "function phucHoiCheckoutDangDo()"
+        js, "function taoTrangThaiCheckout(body, phase = 'creating')", "function phucHoiCheckoutDangDo()"
     )
     send = _function(
         js, "async function guiYeuCauTaoDonDangDo(state)", "async function thuTaoDonDangDo(state)"
@@ -185,8 +185,8 @@ def test_don_giam_con_0_dong_khong_hien_qr_va_file_tinh_da_bump_cache():
     assert "zero_total_done" in zero_total
     assert "await hienHoaDon(currentOrderId)" in zero_total
     assert "qrSection" not in zero_total
-    assert "/js/pos.js?v=20260911-r5-8" in pos_html
-    assert "/js/locales/pos.js?v=20260911-r5-7" in pos_html
+    assert "/js/pos.js?v=20260912-r5-9" in pos_html
+    assert "/js/locales/pos.js?v=20260912-r5-9" in pos_html
     # R1 Forecast prefill sửa cả hai file này nên chúng cùng sang mốc mới.
     assert "/js/seller.js?v=20260911-r5-5" in seller_html
     assert "/js/locales/seller.js?v=20260911-r5-5" in seller_html
