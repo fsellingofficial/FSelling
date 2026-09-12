@@ -153,7 +153,7 @@ def test_da_bump_phien_ban_pos():
     assert "/js/locales/pos.js?v=20260802-bien-the" not in html
     assert "/js/offline-ban.js?v=" in html
     assert "/js/offline-ban.js?v=20260813-i09-f3&g=20260813-i09-g2h6" in html
-    assert "/js/pos.js?v=20260912-r5-9" in html
+    assert "/js/pos.js?v=20260912-r5-10" in html
     assert "/js/api.js?v=20260911-r5-5" in html
 
 

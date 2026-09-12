@@ -1215,6 +1215,11 @@
             || binding.device_id !== await layDeviceId()) {
             throw new Error('creation_key đã bind với immutable intent hoặc identity khác');
         }
+        if (binding.online_only === true) {
+            throw Object.assign(new Error('Chưa cấp phiếu offline; tiếp tục cùng thao tác online'), {
+                offlineAllocationState: 'definitely_not_allocated'
+            });
+        }
         if (binding.contract_version === 0) {
             const legacy = await chay(KHO_PHIEU, 'readonly', store => store.get(binding.offline_uuid));
             if (!legacy) throw new Error('Phiếu đã lưu không còn tại máy; cần đối soát, không tạo lại');
@@ -1241,6 +1246,41 @@
         return sha256(JSON.stringify([Number(options.shop_id), options.username, input.items, tendered]));
     }
 
+    async function reserveOnlineCreation(options, requestDigest) {
+        const binding = {key: 'creation:' + options.creation_key, online_only: true,
+            request_digest: requestDigest, username: options.username,
+            shop_id: Number(options.shop_id), user_id: Number(options.user_id) || null,
+            device_id: await layDeviceId()};
+        // Serialize with both v0/v1 allocation. Keep this binding so a delayed
+        // offline caller cannot allocate after POS has dispatched online.
+        return giaoDich([KHO_META_V1, KHO_PHIEU_V1, KHO_PHIEU], 'readwrite', function (tx, done, abort) {
+            const meta = tx.objectStore(KHO_META_V1);
+            const existing = meta.get(binding.key);
+            existing.onsuccess = function () {
+                if (existing.result) { done(existing.result); return; }
+                // ponytail: recovery scans local receipts/bindings; index UUID/key if this becomes slow.
+                const receipts = tx.objectStore(KHO_PHIEU_V1).getAll();
+                const legacy = tx.objectStore(KHO_PHIEU).getAll();
+                const bindings = meta.getAll();
+                let pending = 3;
+                receipts.onsuccess = legacy.onsuccess = bindings.onsuccess = function () {
+                    if (--pending) return;
+                    const bound = new Set((bindings.result || []).map(row => row.offline_uuid));
+                    // Pre-binding DRAFTs and unidentifiable old v0/ACK rows are unknown.
+                    if ((receipts.result || []).some(row => row.local_creation_key === options.creation_key
+                            || (!row.local_creation_key && !bound.has(row.offline_uuid)))
+                        || (legacy.result || []).some(row => !bound.has(row.offline_uuid))) {
+                        abort(new Error('Phiếu đã được cấp; cần khôi phục offline'));
+                        return;
+                    }
+                    if (usernameHienTai() !== binding.username) { abort(new Error('Identity đã đổi')); return; }
+                    meta.put(binding);
+                    done(binding);
+                };
+            };
+        });
+    }
+
     async function createReceiptV1(options) {
         if (!options || options.payment_method !== 'cash'
             || options.voucher_code || Number(options.loyalty_points_to_use) !== 0
@@ -1260,7 +1300,13 @@
         const bindingKey = 'creation:' + creationKey;
         const binding = await chay(KHO_META_V1, 'readonly', store => store.get(bindingKey));
         if (binding) return replayCreationV1(binding, options, requestDigest);
-        if (!dangOffline()) throw new Error('Receipt v1 chỉ được tạo khi navigator.onLine === false');
+        if (!dangOffline()) {
+            if (options.allow_online_recovery !== true) {
+                throw new Error('Receipt v1 chỉ được tạo khi navigator.onLine === false');
+            }
+            const online = await reserveOnlineCreation(options, requestDigest);
+            return replayCreationV1(online, options, requestDigest);
+        }
         const usable = await usableV1({ shop_id: shopId, username, user_id: options.user_id });
         if (!usable) return null;
         const normalized = chuanHoaItems(options.items, usable.catalog.rows);

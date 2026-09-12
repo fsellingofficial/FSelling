@@ -497,7 +497,7 @@ def test_all_v1_i18n_keys_present_en():
 
 def test_pos_js_version_bumped():
     html = _read('static/pos.html')
-    assert 'pos.js?v=20260912-r5-9' in html
+    assert 'pos.js?v=20260912-r5-10' in html
 
 
 def test_locale_pos_version_bumped():

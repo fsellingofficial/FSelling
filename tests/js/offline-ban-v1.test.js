@@ -718,6 +718,7 @@ async function main() {
     assert.equal(pos.cart[0].quantity, 2);
     assert.equal(pos.cashTenderedAmount, 60000);
     pos.cart[0].quantity = 1; pos.cashTenderedAmount = 100000; // mutable UI must not change saved intent
+    navigator.onLine = true;
     await pos.checkout();
     await api.finalizeDraftsV1({shop_id:1,user_id:11,username:'alice'});
     assert.equal(fake.inspect('fselling-offline','receipt_v1').length,v1Before+2,'retry must not allocate a second receipt');
@@ -725,6 +726,7 @@ async function main() {
     assert.equal(onlineCreates,0);
     assert.equal(pos.pendingCheckoutState,null);
     // Failure to persist the retry key must stop before any IndexedDB allocation.
+    navigator.onLine = false;
     pos.cart = [{product_id:2,product_name:catalog4[1].name,price:28000,quantity:2}];
     const saveState = pos.sessionStorage.setItem;
     pos.sessionStorage.setItem = () => { throw Error('session quota'); };
@@ -749,7 +751,8 @@ async function main() {
     const savedReceipt = clone(fake.inspect('fselling-offline', 'receipt_v1')[0]);
     const replayOptions = { shop_id: 1, username: 'alice', user_id: 11, creation_key: failedKey,
         payment_method: 'cash', loyalty_points_to_use: 0, cash_tendered: 60000,
-        items: JSON.parse(recoveryState).cart };
+        items: JSON.parse(recoveryState).cart, allow_online_recovery: true };
+    navigator.onLine = true;
     for (const state of ['SYNCING', 'RETRYABLE']) {
         receiptStore.data.set(keyString(savedReceipt.offline_uuid), { ...savedReceipt, state });
         assert.equal((await api.createReceiptV1(replayOptions)).state, state);
@@ -773,7 +776,7 @@ async function main() {
     posStorage.set('pos-state', recoveryState);
     pos.pendingCheckoutState = null; pos.checkoutOperationId = null;
     assert.equal(pos.phucHoiCheckoutDangDo(), true);
-    navigator.onLine = false;
+    navigator.onLine = true;
     await pos.checkout();
     assert.equal(fake.inspect('fselling-offline', 'receipt_v1').length, 1, 'ACK replay must never allocate another receipt');
     assert.equal(pos.pendingCheckoutState, null);
@@ -813,6 +816,108 @@ async function main() {
     await api.xoaPhieu(legacySaved.offline_uuid);
     await assert.rejects(api.luuPhieuTuPOS(legacyOptions), /không tạo lại/);
     assert.equal(fake.inspect('fselling-offline','phieu').length,0);
+
+    // Old v0 receipts have no creation key. Without a binding we cannot prove
+    // whether this pending POS intent already produced one of those receipts.
+    const unboundV0 = await api.luuPhieu(1, legacyOptions.items, 60000, 'alice');
+    navigator.onLine = true;
+    await assert.rejects(api.createReceiptV1({...legacyOptions,creation_key:'unbound-v0-unknown',
+        allow_online_recovery:true}), error => error.offlineAllocationState !== 'definitely_not_allocated');
+    assert.equal(fake.inspect('fselling-offline','phieu').length, 1);
+    await api.xoaPhieu(unboundV0.offline_uuid);
+
+    // Actual POS create/pay controllers + production IDB, with only HTTP/DOM fake.
+    // Allocation abort has no durable receipt/binding. Retry and reload online
+    // must create exactly one order, preserving the originally confirmed intent.
+    navigator.onLine = true;
+    nextDigest = await catalogDigest(catalog4);
+    await api.prepareV1({shop_id:1,username:'alice',products:catalog4});
+    const httpCreates = [], httpPays = [];
+    Object.assign(pos, {
+        posRequestUi: () => ({}), apDungKetQuaDiemServer() {},
+        renderCashQuickAmounts() {}, xacNhanTongTienServer: async () => true,
+        laLoi4xx: error => error.status >= 400 && error.status < 500 && !error.mutationOutcomeUnknown,
+        document: {getElementById: id => id === 'txtTotal' ? {innerText:''} : null},
+        hienHoaDon: async () => { pos.cart = []; },
+        apiCall: async (path, method, body) => {
+            assert.equal(method, 'POST');
+            if (path === '/orders/1') {
+                httpCreates.push(clone(body));
+                return {order_id: 1000 + httpCreates.length, status:'PENDING', total:56000};
+            }
+            assert.match(path, /^\/orders\/\d+\/pay$/);
+            httpPays.push(clone(body));
+            return {msg:'Paid successfully'};
+        }
+    });
+    vm.runInContext(section('async function thuTaoDonDangDo(', 'async function checkout(')
+        + section('async function guiYeuCauTaoDonDangDo(', 'function identityDongBoPOS(')
+        + section('async function hoanTatTienMatDangCho(', 'function apDungKetQuaDiemServer('), pos);
+    for (const reload of [false, true]) {
+        navigator.onLine = false;
+        pos.currentOrderId = null; pos.pendingCashOrderId = null; pos.checkoutOperationId = null;
+        pos.pendingCheckoutState = null; posStorage.clear();
+        pos.cart = [{product_id:2,product_name:catalog4[1].name,price:28000,quantity:2}];
+        pos.cashTenderedAmount = 60000;
+        const createsBefore = httpCreates.length;
+        const keyCount = nextPosKey;
+        fake.failNextWrite = 'receipt_v1';
+        await pos.checkout();
+        const failed = clone(pos.pendingCheckoutState);
+        assert.equal(failed.phase, 'offline_pending');
+        assert.equal(fake.inspect('fselling-offline','receipt_v1').length, 0);
+        assert.equal(fake.inspect('fselling-offline','meta_v1').filter(row => row.key === 'creation:' + failed.operation_id).length, 0);
+        navigator.onLine = true;
+        // Failed/unknown IDB reads or failure to commit the online binding
+        // cannot authorize an HTTP request, even when the network is back.
+        const transactions = new Map(Array.from(fake.databases.get('fselling-offline').connections,
+            connection => [connection, connection.transaction]));
+        for (const connection of transactions.keys()) connection.transaction = () => { throw new Error('IDB unavailable'); };
+        try { await pos.checkout(); } finally {
+            for (const [connection, transaction] of transactions) connection.transaction = transaction;
+        }
+        assert.equal(httpCreates.length, createsBefore);
+        assert.equal(pos.pendingCheckoutState.phase, 'offline_pending');
+        assert.equal(pos.pendingCheckoutState.operation_id, failed.operation_id);
+        fake.failNextWrite = 'meta_v1';
+        await pos.checkout();
+        assert.equal(httpCreates.length, createsBefore);
+        assert.equal(pos.pendingCheckoutState.phase, 'offline_pending');
+        assert.equal(fake.inspect('fselling-offline','meta_v1').filter(row => row.key === 'creation:' + failed.operation_id).length, 0);
+        if (reload) {
+            pos.pendingCheckoutState = null; pos.checkoutOperationId = null; pos.cart = [];
+            assert.equal(pos.phucHoiCheckoutDangDo(), true);
+        }
+        await pos.checkout();
+        assert.equal(httpCreates.length, createsBefore + 1, 'allocation abort must recover to one online create');
+        assert.deepEqual(httpCreates.at(-1), failed.create_payload);
+        assert.deepEqual(httpPays.at(-1), {tendered_amount:60000});
+        assert.equal(nextPosKey, keyCount + 1, 'online recovery keeps the exact creation key');
+        assert.equal(pos.pendingCheckoutState, null);
+        assert.equal(fake.inspect('fselling-offline','receipt_v1').length, 0);
+        assert.equal(fake.inspect('fselling-offline','phieu').length, 0);
+        const retryOptions = {shop_id:1,username:'alice',creation_key:failed.operation_id,
+            payment_method:'cash',loyalty_points_to_use:0,items:failed.cart,
+            cash_tendered:60000,allow_online_recovery:true};
+        navigator.onLine = false;
+        await assert.rejects(api.luuPhieuTuPOS(retryOptions), error =>
+            error.offlineAllocationState === 'definitely_not_allocated');
+        await assert.rejects(api.luuPhieuTuPOS({...retryOptions,cash_tendered:70000}), /immutable intent/);
+        assert.equal(fake.inspect('fselling-offline','receipt_v1').length, 0, 'late offline retry cannot allocate after online dispatch');
+        assert.equal(fake.inspect('fselling-offline','phieu').length, 0);
+    }
+
+    // A pre-binding v1 receipt is durable even without its newer meta mapping.
+    const orphanOptions = {shop_id:1,username:'alice',creation_key:'pre-binding-draft-rc',
+        payment_method:'cash',loyalty_points_to_use:0,items:replayOptions.items,
+        cash_tendered:60000,allow_online_recovery:true};
+    navigator.onLine = false;
+    const orphan = await api.createReceiptV1(orphanOptions);
+    fake.databases.get('fselling-offline').stores.get('meta_v1').data.delete(keyString('creation:' + orphanOptions.creation_key));
+    navigator.onLine = true;
+    await assert.rejects(api.createReceiptV1(orphanOptions), error =>
+        error.offlineAllocationState !== 'definitely_not_allocated');
+    assert.equal(fake.inspect('fselling-offline','receipt_v1')[0].offline_uuid, orphan.offline_uuid);
 
     // Opening a forward version triggers production onversionchange and closes cache.
     const closedBefore = fake.closedConnections;

@@ -3074,6 +3074,7 @@ async function luuBanOffline(state) {
         shop_id: Number(offlineRetry ? state.shop_id : currentShopId),
         username: localStorage.getItem('username') || '',
         creation_key: state.operation_id,
+        allow_online_recovery: offlineRetry,
         items: offlineRetry ? state.cart : cart,
         cash_tendered: offlineRetry ? state.tendered_amount : cashTenderedAmount,
         device_label: localStorage.getItem('username') || null,
@@ -3105,15 +3106,23 @@ async function thuLuuOfflineDangDo(state) {
     checkoutBusy = true;
     checkoutOperationId = state.operation_id;
     capNhatNutCheckout();
+    let onlineRetry = null;
     try {
         luuCheckoutDangDo(state);
         await luuBanOffline(state);
     } catch (error) {
-        showToast(error.message);
+        const allocationState = error.offlineAllocationState || 'durable_or_unknown';
+        if (allocationState === 'definitely_not_allocated') {
+            onlineRetry = luuCheckoutDangDo({...state, phase: 'creating'});
+            phucHoiCheckoutDangDo();
+        } else {
+            showToast(error.message);
+        }
     } finally {
         checkoutBusy = false;
         capNhatNutCheckout();
     }
+    if (onlineRetry) return thuTaoDonDangDo(onlineRetry);
 }
 
 async function thuTaoDonDangDo(state) {

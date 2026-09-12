@@ -20,6 +20,7 @@ from ..dependencies import (
     require_staff_permission,
 )
 from ..schemas.catalog import VoucherCreate
+from . import auth_session_service
 from .log_service import log_system_action
 
 
@@ -121,6 +122,7 @@ def create_voucher(
         usage_limit=v.usage_limit,
         expires_at=v.expires_at,
     )
+    auth_session_service.fence_live_auth_session(db)
     db.add(db_v)
     db.commit()
     unit = "%" if v.discount_type == "percentage" else "đ"
@@ -167,6 +169,7 @@ def update_voucher(
             detail=tr("Mã voucher này đã tồn tại trong cửa hàng"),
         )
 
+    auth_session_service.fence_live_auth_session(db)
     db_v.code = code_stripped
     db_v.discount_type = v.discount_type
     db_v.discount_bps = (
@@ -200,6 +203,7 @@ def delete_voucher(db: Session, current_user: models.User, voucher_id: int) -> D
     require_shop_access(db, db_v.shop_id, current_user)
     require_staff_permission(current_user, PERMISSION_VOUCHER)
     code = db_v.code
+    auth_session_service.fence_live_auth_session(db)
     db.delete(db_v)
     db.commit()
     log_system_action(db, current_user.id, "DELETE_VOUCHER", f"Xóa Voucher '{code}'")

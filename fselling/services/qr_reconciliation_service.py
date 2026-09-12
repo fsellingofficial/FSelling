@@ -17,7 +17,7 @@ from ..schemas.qr_reconciliation import (
     MAX_RECONCILIATION_ID,
     ReconciliationActionRequest,
 )
-from . import order_service
+from . import auth_session_service, order_service
 from .qr_webhook_service import serialize_event
 
 
@@ -563,6 +563,7 @@ def reconcile_event(
             if actor_database_role != "ADMIN":
                 raise _error(404, ERROR_NOT_FOUND, "Bank evidence was not found")
             db.execute(text("BEGIN IMMEDIATE"))
+            auth_session_service.fence_live_auth_session(db)
         else:
             order_service._lock_shop_for_order(db, int(intended_shop_id))
     except HTTPException:

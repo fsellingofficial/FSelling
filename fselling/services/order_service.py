@@ -284,6 +284,9 @@ def _current_cash_shift(
                 status_code=409,
                 detail=tr("Ca vừa được đóng; vui lòng tải lại và mở ca mới"),
             )
+    if lock_for_cash_write:
+        # Also fence legacy owner/manager payments allowed without a shift.
+        auth_session_service.fence_live_auth_session(db)
     return shift
 
 
@@ -303,6 +306,7 @@ def apply_transition(
     tác dụng phụ (hoàn kho, hoàn lượt voucher) - hoặc cùng thành công, hoặc
     cùng không có gì xảy ra.
     """
+    auth_session_service.fence_live_auth_session(db)
     result = db.execute(
         _UPDATE_STATUS,
         {"to_state": to_state, "order_id": order_id, "from_states": list(from_states)},
@@ -1547,6 +1551,7 @@ def complete_refund(
                 ),
             )
 
+    auth_session_service.fence_live_auth_session(db)
     completed_at = datetime.utcnow()
     target_status = (
         STATUS_CANCELLED

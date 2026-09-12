@@ -1,10 +1,117 @@
 import uuid
 
+import pytest
+from sqlalchemy import select, text
+
 from conftest import auth
 from fselling import models
-from fselling.services import loyalty_service
+from fselling.core.database import SessionLocal
+from fselling.services import fnb_service, loyalty_service
 
 from test_fnb_r1c_checks import op, sent_session
+
+
+def _closed_debt_settled_externally(client):
+    ctx, headers, session = sent_session(client, 1, station="DIRECT")
+    check = client.get(f"/api/fnb/sessions/{session['id']}/checks", headers=headers).json()["checks"][0]
+    customer = client.post(f"/api/customers/{ctx['shop_id']}", headers=headers,
+                           json={"name": "Closed debt", "phone": f"09{uuid.uuid4().int % 10**8:08d}"})
+    assert customer.status_code == 200, customer.text
+    paid = client.post(f"/api/fnb/checks/{check['id']}/pay", headers=headers, json={
+        "payment_method": "debt", "customer_id": customer.json()["id"],
+        "expected_revision": check["revision"], "expected_session_revision": session["revision"],
+        "operation_id": op("closed-debt"),
+    })
+    assert paid.status_code == 200, paid.text
+    closed = client.post(f"/api/fnb/sessions/{session['id']}/close", headers=headers, json={
+        "expected_revision": paid.json()["session_revision"], "operation_id": op("close-debt"),
+    })
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "CLOSED"
+    order_id = paid.json()["order"]["id"]
+    settled = client.post(f"/api/orders/{order_id}/debt-payment", headers=headers, json={
+        "method": "transfer", "amount": 100000, "operation_id": op("external-debt"),
+    })
+    assert settled.status_code == 200, settled.text
+    return ctx, headers, session["id"], check["id"]
+
+
+def _fnb_sync_snapshot():
+    with SessionLocal() as db:
+        return {
+            model.__tablename__: db.execute(select(model.__table__).order_by(model.id)).all()
+            for model in (models.FnbServiceSession, models.FnbServiceCheck, models.FnbActionLog,
+                          models.FnbSessionTable, models.FnbTable, models.Shop)
+        }
+
+
+@pytest.mark.parametrize("terminal", ["CLOSED", "CANCELLED"])
+def test_terminal_debt_session_stays_terminal_after_external_settlement(client, terminal):
+    ctx, headers, session_id, check_id = _closed_debt_settled_externally(client)
+    with SessionLocal() as db:
+        session = db.get(models.FnbServiceSession, session_id)
+        # CLOSED is the exact public journey. CANCELLED covers the other model
+        # terminal state for historical/imported checks still linked to orders.
+        session.status = terminal
+        db.commit()
+        closed_identity = (session.closed_at, session.closed_by_user_id, session.merged_into_session_id)
+        revision = session.revision
+        check_revision = db.get(models.FnbServiceCheck, check_id).revision
+        floor_revision = db.get(models.Shop, ctx["shop_id"]).fnb_revision
+    before = _fnb_sync_snapshot()
+    response = client.get(f"/api/fnb/sessions/{session_id}/checks", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["checks"][0]["status"] == "PAID"
+    with SessionLocal() as db:
+        session = db.get(models.FnbServiceSession, session_id)
+        assert session.status == terminal
+        assert (session.closed_at, session.closed_by_user_id, session.merged_into_session_id) == closed_identity
+        assert session.revision == revision + 1
+        assert db.get(models.FnbServiceCheck, check_id).revision == check_revision + 1
+        assert db.get(models.Shop, ctx["shop_id"]).fnb_revision == floor_revision + 1
+        assert db.query(models.FnbSessionTable).filter_by(session_id=session_id, released_at=None).count() == 0
+    after = _fnb_sync_snapshot()
+    for table in ("fnb_action_logs", "fnb_session_tables", "fnb_tables"):
+        assert after[table] == before[table]
+    assert client.get(f"/api/fnb/sessions/{session_id}/checks", headers=headers).json() == response.json()
+    assert _fnb_sync_snapshot() == after
+
+
+def test_checks_sync_rechecks_revoked_session_before_writing(client, monkeypatch):
+    from test_auth_session_mutation_fence_r4 import _business_snapshot, _revoke_at_service_entry
+
+    _, headers, session_id, _ = _closed_debt_settled_externally(client)
+    before = (_business_snapshot(), _fnb_sync_snapshot())
+    called = _revoke_at_service_entry(monkeypatch, fnb_service, "get_checks")
+    response = client.get(f"/api/fnb/sessions/{session_id}/checks", headers=headers)
+    assert len(called) == 1
+    assert (_business_snapshot(), _fnb_sync_snapshot()) == before
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"]["code"] == "AUTH_SESSION_REVOKED"
+
+
+def test_checks_sync_discards_stale_read_before_write_lock(client, monkeypatch):
+    _, headers, session_id, _ = _closed_debt_settled_externally(client)
+    real_access = fnb_service._session_for_access
+    revisions = []
+
+    def stale_read(db, *args, **kwargs):
+        session = real_access(db, *args, **kwargs)
+        if not revisions:
+            revisions.append(session.revision)
+            with SessionLocal() as other:
+                other.execute(text("UPDATE fnb_service_sessions SET status = 'CANCELLED', "
+                                   "revision = revision + 1 WHERE id = :id"), {"id": session_id})
+                other.commit()
+        return session
+
+    monkeypatch.setattr(fnb_service, "_session_for_access", stale_read)
+    response = client.get(f"/api/fnb/sessions/{session_id}/checks", headers=headers)
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        session = db.get(models.FnbServiceSession, session_id)
+        assert session.status == "CANCELLED"
+        assert session.revision == revisions[0] + 2
 
 
 def test_close_rejects_active_kitchen_ticket_without_releasing_table(client, db):

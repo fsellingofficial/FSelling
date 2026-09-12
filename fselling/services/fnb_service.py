@@ -1114,12 +1114,21 @@ def _split_amounts(
 
 
 def get_checks(db: Session, current_user: models.User, session_id: int) -> dict:
-    session = _session_for_access(db, current_user, session_id, PERMISSION_FNB_CHECKOUT)
-    require_fnb_shop(db, session.shop_id, current_user)
-    if _sync_check_payment_statuses(db, session):
-        db.commit()
-        db.refresh(session)
-    return _checks_result(db, session)
+    try:
+        session = _session_for_access(db, current_user, session_id, PERMISSION_FNB_CHECKOUT)
+        _prepare_locked_shop(db, int(session.shop_id))
+        session = _session_for_access(db, current_user, session_id, PERMISSION_FNB_CHECKOUT)
+        require_fnb_shop(db, session.shop_id, current_user)
+        changed = _sync_check_payment_statuses(db, session)
+        result = _checks_result(db, session)
+        if changed:
+            db.commit()
+        else:
+            db.rollback()
+        return result
+    except Exception:
+        db.rollback()
+        raise
 
 
 def preview_split(
@@ -1276,6 +1285,8 @@ def get_provisional_receipt(
 def _refresh_session_status(
     db: Session, session: models.FnbServiceSession
 ) -> None:
+    if session.status not in _ACTIVE_SESSION_STATUSES:
+        return
     statuses = [
         row[0]
         for row in db.query(models.FnbServiceCheck.status)
